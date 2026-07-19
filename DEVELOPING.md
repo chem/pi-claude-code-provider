@@ -39,10 +39,10 @@ Machine-readable values live in `src/compatibility.ts`; update code and this tab
 | --- | --- |
 | Pi | 0.80.10 |
 | Claude Code | 2.1.215 |
-| Node.js | 24.16.0 on WSL2; 22.23.1 on Windows |
-| Platform | WSL2 Ubuntu/Linux x64; native Windows x64 |
+| Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
+| Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
 
-Apple Silicon macOS is implemented but requires real-hardware validation. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
+Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml); subscription-consuming live Claude validation on macOS remains pending. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
 
 ## Validation
 

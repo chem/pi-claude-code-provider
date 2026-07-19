@@ -13,7 +13,7 @@ This project was developed using frontier AI models under human guidance. Almost
 - Claude Code, verified with 2.1.215
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 
-WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS is implemented but unverified; other platforms continue with a warning and runtime capability checks.
+WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) on Node.js 24.16.0; subscription-consuming live validation on macOS remains pending. Other platforms continue with a warning and runtime capability checks.
 
 The provider rejects API-key authentication, alternate Anthropic base URLs, and Bedrock, Vertex, or Foundry routing. If `claude` is not on `PATH`, set `PI_CLAUDE_CODE_PROVIDER_PATH` to its executable path.
 
