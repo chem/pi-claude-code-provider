@@ -10,8 +10,9 @@ async function assertProcessGone(pid) {
                 process.kill(pid, 0);
                 await new Promise((resolve) => setTimeout(resolve, 25));
             }
-            catch {
-                throw new Error("gone");
+            catch (error) {
+                if (error?.code === "ESRCH") throw new Error("gone");
+                throw error;
             }
         }
     }, /gone/);
@@ -67,6 +68,44 @@ test("process-group termination removes a descendant", { skip: process.platform 
     const pid = await new Promise((resolve) => parent.stdout.once("data", (chunk) => resolve(Number(chunk.toString().trim()))));
     await terminateProcessGroup(parent);
     await assertProcessGone(pid);
+});
+test("process-group termination tolerates EPERM from an existence probe", { skip: process.platform === "win32" }, async () => {
+    const parent = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+    let injected = false;
+    const killProcess = (pid, signal) => {
+        if (signal === 0 && !injected) {
+            injected = true;
+            const error = new Error("synthetic process-group probe EPERM");
+            error.code = "EPERM";
+            error.errno = -1;
+            error.syscall = "kill";
+            throw error;
+        }
+        return process.kill(pid, signal);
+    };
+    await terminateProcessGroup(parent, 500, killProcess);
+    assert.equal(injected, true);
+    await assertProcessGone(parent.pid);
+});
+test("process-group termination reports signal permission failures with context", { skip: process.platform === "win32" }, async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+    const denySignal = () => {
+        const error = new Error("synthetic process-group signal EPERM");
+        error.code = "EPERM";
+        error.errno = -1;
+        error.syscall = "kill";
+        throw error;
+    };
+    try {
+        await assert.rejects(
+            terminateProcessGroup(child, 500, denySignal),
+            new RegExp(`Process group ${child.pid} cleanup failed during SIGTERM.*code=EPERM.*syscall=kill`),
+        );
+    }
+    finally {
+        process.kill(-child.pid, "SIGKILL");
+        await new Promise((resolve) => child.once("close", resolve));
+    }
 });
 test("process-group termination removes a descendant after its leader exits", { skip: process.platform === "win32" }, async () => {
     const body = `const {spawn}=require("node:child_process"); const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}); child.unref(); process.stdout.write(String(child.pid)+"\\n");`;

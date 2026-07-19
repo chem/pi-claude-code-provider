@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { finished } from "node:stream/promises";
 import type { ClaudeInstallation, SearchMetrics } from "./types.ts";
 import { baseClaudeArgs } from "./claude-args.ts";
 import { buildClaudeEnvironment, claudeLaunch } from "./auth.ts";
@@ -29,6 +30,7 @@ export async function searchWithClaude(
   signal: AbortSignal | undefined,
   timeoutMs = SEARCH_TIMEOUT_MS,
   cleanupDirectory: CleanupDirectory = cleanupDirectoryDefault,
+  supervise: typeof superviseProcess = superviseProcess,
 ): Promise<string> {
   const startedAt = Date.now();
   const requestBytes = Buffer.byteLength(query) + Buffer.byteLength(focus ?? "");
@@ -72,9 +74,10 @@ export async function searchWithClaude(
     }
   };
   const terminateInBackground = (): void => {
-    void terminateCurrent().catch((error: unknown) => {
-      processFailure ??= new Error(`Claude Code process cleanup failed: ${errorText(error)}`);
-    });
+    // The memoized termination is awaited before this request returns. Do not
+    // turn its background rejection into a process failure here: doing so can
+    // mask an already-established protocol or cancellation failure.
+    void terminateCurrent().catch(() => {});
   };
   try {
     directory = await createRuntimeDirectory("web_search_request");
@@ -115,7 +118,7 @@ export async function searchWithClaude(
       stdio: ["ignore", "pipe", "pipe"],
     });
     metrics.lastPhase = "spawned";
-    supervisor = superviseProcess(child, {
+    supervisor = supervise(child, {
       idleTimeoutMs: timeoutMs,
       totalTimeoutMs: timeoutMs,
       onFailure(error) {
@@ -134,10 +137,9 @@ export async function searchWithClaude(
     protocol = currentProtocol;
     let stderr = "";
     let protocolError: Error | undefined;
-    let resolveStdout: (() => void) | undefined;
-    const stdoutDone = new Promise<void>((resolve) => {
-      resolveStdout = resolve;
-    });
+    const stdoutDone = child.stdout
+      ? finished(child.stdout, { cleanup: true }).catch(() => {})
+      : Promise.resolve();
     const parser = new JsonlParser((value) => currentProtocol.accept(value), MAX_CAPTURE_BYTES);
     child.stdout?.on("data", (chunk: Buffer) => {
       supervisor?.touch();
@@ -163,9 +165,7 @@ export async function searchWithClaude(
           protocolError = error instanceof Error ? error : new Error(String(error));
         }
       }
-      resolveStdout?.();
     });
-    child.stdout?.once("close", () => resolveStdout?.());
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-64 * 1024);
     });
@@ -174,7 +174,6 @@ export async function searchWithClaude(
     metrics.exitSignal = processResult.signal;
     metrics.lastPhase = "process_exited";
     await stdoutDone;
-    await terminateCurrent();
     signal?.removeEventListener("abort", abortHandler);
     if (signal?.aborted) throw new Error("Web search was cancelled");
     if (processFailure) {
@@ -189,6 +188,7 @@ export async function searchWithClaude(
         `Claude web search exited with code ${String(processResult.code)}, signal ${String(processResult.signal)}: ${stderr.trim()}`,
       );
     }
+    await terminateCurrent();
     const result = currentProtocol.result();
     metrics.resultBytes = Buffer.byteLength(result);
     metrics.lastPhase = "completed";

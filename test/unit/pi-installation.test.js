@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -21,7 +21,11 @@ test("locates Pi packages in the bundled Windows-installer layout", async () => 
     await writeFile(join(typebox, "package.json"), JSON.stringify({ name: "typebox" }));
     process.env.PATH = `${prefix}${delimiter}${originalPath ?? ""}`;
     const packages = locatePiPackages();
-    assert.deepEqual(packages, { codingAgent, piAi, typebox });
+    assert.deepEqual(packages, {
+      codingAgent: await realpath(codingAgent),
+      piAi: await realpath(piAi),
+      typebox: await realpath(typebox),
+    });
     assert.equal(piCliEntry(codingAgent), join(codingAgent, "dist", "cli.js"));
   } finally {
     if (originalPath === undefined) delete process.env.PATH;

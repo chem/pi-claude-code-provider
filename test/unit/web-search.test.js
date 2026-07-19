@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { getLastSearchMetrics } from "../../src/metrics.ts";
-import { terminateProcessGroup } from "../../src/process-utils.ts";
+import { superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
 import { searchWithClaude } from "../../src/web-search.ts";
 
 const searchInit = {
@@ -19,6 +19,20 @@ async function fakeSearch(body) {
     await writeFile(executable, `#!/usr/bin/env node\n${body}\n`, { mode: 0o700 });
     await chmod(executable, 0o700);
     return { directory, executable };
+}
+
+function supervisorWithCleanupFailure(child, options) {
+    const supervisor = superviseProcess(child, options);
+    let termination;
+    return {
+        ...supervisor,
+        terminate() {
+            termination ??= supervisor.terminate().then(() => {
+                throw new Error("synthetic search process-group EPERM");
+            });
+            return termination;
+        },
+    };
 }
 
 test("web search uses a relative private request reference and validates its result", async () => {
@@ -46,29 +60,39 @@ process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "
     }
 });
 
-test("web search preserves process-group cleanup rejection and removes private state", { skip: process.platform === "win32" }, async () => {
+test("web search preserves process-group cleanup rejection and removes private state", async () => {
     const successful = await fakeSearch(`
 process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");
 process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"must not succeed"}) + "\\n");`);
-    const originalKill = process.kill;
-    process.kill = ((pid, signal) => {
-        if (pid < 0) {
-            const error = new Error("synthetic search process-group EPERM");
-            error.code = "EPERM";
-            throw error;
-        }
-        return originalKill(pid, signal);
-    });
     try {
         const installation = { executable: successful.executable, version: "test", subscriptionType: "pro" };
-        await assert.rejects(searchWithClaude(installation, "query", undefined, undefined), /synthetic search process-group EPERM/);
+        await assert.rejects(
+            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, supervisorWithCleanupFailure),
+            /synthetic search process-group EPERM/,
+        );
         const metrics = getLastSearchMetrics();
         assert.equal(metrics.errorCategory, "process_cleanup");
         assert.equal(metrics.cleanupComplete, true);
     }
     finally {
-        process.kill = originalKill;
         await rm(successful.directory, { recursive: true, force: true });
+    }
+});
+
+test("web search preserves a protocol failure when process cleanup also fails", async () => {
+    const malformed = await fakeSearch(`process.stdout.write("not json");`);
+    try {
+        const installation = { executable: malformed.executable, version: "test", subscriptionType: "pro" };
+        await assert.rejects(
+            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, supervisorWithCleanupFailure),
+            /malformed JSONL; Claude Code process tree cleanup failed: synthetic search process-group EPERM/,
+        );
+        const metrics = getLastSearchMetrics();
+        assert.equal(metrics.errorCategory, "protocol_invalid_json");
+        assert.equal(metrics.cleanupComplete, true);
+    }
+    finally {
+        await rm(malformed.directory, { recursive: true, force: true });
     }
 });
 

@@ -22,6 +22,8 @@ export interface ProcessSupervisor {
   dispose(): void;
 }
 
+type ProcessKiller = (pid: number, signal?: NodeJS.Signals | number) => true;
+
 export function superviseProcess(child: ChildProcess, options: ProcessSupervisorOptions): ProcessSupervisor {
   let idleTimer: NodeJS.Timeout | undefined;
   let totalTimer: NodeJS.Timeout | undefined;
@@ -108,7 +110,11 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
   };
 }
 
-export async function terminateProcessGroup(child: ChildProcess, graceMs = 500): Promise<void> {
+export async function terminateProcessGroup(
+  child: ChildProcess,
+  graceMs = 500,
+  killProcess: ProcessKiller = process.kill,
+): Promise<void> {
   const pid = child.pid;
   if (!pid) return;
 
@@ -118,26 +124,27 @@ export async function terminateProcessGroup(child: ChildProcess, graceMs = 500):
   }
 
   try {
-    process.kill(-pid, "SIGTERM");
+    killProcess(-pid, "SIGTERM");
   } catch (error) {
-    if (isMissingProcess(error)) return;
-    if (child.exitCode === null && child.signalCode === null && child.kill("SIGTERM")) {
-      await waitForChildClose(child, graceMs);
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (isMissingProcess(error)) {
+      await terminateDirectChild(child, graceMs);
       return;
     }
-    throw error;
+    throw processGroupCleanupError(pid, "SIGTERM", child, error);
   }
 
-  if (await waitForProcessGroupExit(pid, graceMs)) return;
+  if (await waitForProcessGroupExit(pid, graceMs, killProcess)) return;
   try {
-    process.kill(-pid, "SIGKILL");
+    killProcess(-pid, "SIGKILL");
   } catch (error) {
     if (isMissingProcess(error)) return;
-    throw error;
+    throw processGroupCleanupError(pid, "SIGKILL", child, error);
   }
-  if (!(await waitForProcessGroupExit(pid, graceMs))) {
-    throw new Error(`Process group ${pid} did not terminate`);
+  if (!(await waitForProcessGroupExit(pid, graceMs, killProcess))) {
+    throw new Error(
+      `Process group ${pid} did not terminate after SIGKILL ` +
+      `(child exitCode=${String(child.exitCode)}, signalCode=${String(child.signalCode)})`,
+    );
   }
 }
 
@@ -208,18 +215,35 @@ async function runTaskkill(executable: string, pid: number): Promise<void> {
   });
 }
 
-async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+async function waitForProcessGroupExit(
+  pid: number,
+  timeoutMs: number,
+  killProcess: ProcessKiller,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      process.kill(-pid, 0);
+      killProcess(-pid, 0);
     } catch (error) {
       if (isMissingProcess(error)) return true;
-      throw error;
+      // POSIX signal 0 performs an existence/permission probe. EPERM therefore
+      // means the group may still exist, not that cleanup itself was denied.
+      // Keep polling; actual SIGTERM/SIGKILL permission failures remain fatal.
+      if (!isPermissionDenied(error)) throw processGroupProbeError(pid, error);
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
   return false;
+}
+
+async function terminateDirectChild(child: ChildProcess, graceMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (!child.kill("SIGTERM")) return;
+  await waitForChildClose(child, graceMs);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await waitForChildClose(child, graceMs);
+  }
 }
 
 async function waitForChildClose(child: ChildProcess, timeoutMs: number): Promise<void> {
@@ -245,6 +269,35 @@ function validPid(value: unknown): value is number {
 
 function isMissingProcess(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ESRCH";
+}
+
+function isPermissionDenied(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EPERM";
+}
+
+function processGroupCleanupError(
+  pid: number,
+  phase: "SIGTERM" | "SIGKILL",
+  child: ChildProcess,
+  error: unknown,
+): Error {
+  return new Error(
+    `Process group ${pid} cleanup failed during ${phase} ` +
+    `(child exitCode=${String(child.exitCode)}, signalCode=${String(child.signalCode)}): ${errorDetails(error)}`,
+    { cause: error },
+  );
+}
+
+function processGroupProbeError(pid: number, error: unknown): Error {
+  return new Error(`Process group ${pid} status probe failed: ${errorDetails(error)}`, { cause: error });
+}
+
+function errorDetails(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const fields = ["code", "errno", "syscall"]
+    .filter((field) => field in error)
+    .map((field) => `${field}=${String((error as unknown as Record<string, unknown>)[field])}`);
+  return fields.length > 0 ? `${error.message} [${fields.join(" ")}]` : error.message;
 }
 
 function errorMessage(error: unknown): string {
