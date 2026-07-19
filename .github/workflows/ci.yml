@@ -1,0 +1,43 @@
+name: deterministic release checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 24.16.0
+          - os: ubuntu-latest
+            node: 22.23.1
+          - os: macos-latest
+            node: 24.16.0
+          - os: windows-latest
+            node: 22.23.1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: tooling/package-lock.json
+      - run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.80.10
+      - run: npm run setup:dev
+      - run: npm run release:check

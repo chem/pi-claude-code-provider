@@ -1,0 +1,62 @@
+{
+  "name": "pi-claude-code-provider",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Use a Claude Code subscription as a model provider in Pi through the approved non-interactive mode and without Anthropic's Agents SDK.",
+  "author": "chem <sineverbisnon@gmail.com>",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-extension", "claude-code", "subscription"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chem/pi-claude-code-provider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chem/pi-claude-code-provider/issues"
+  },
+  "homepage": "https://github.com/chem/pi-claude-code-provider#readme",
+  "files": [
+    "bridge",
+    "extensions",
+    "src",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "DESIGN.md",
+    "DEVELOPING.md",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": ["./extensions/pi-claude-code-provider.ts"]
+  },
+  "scripts": {
+    "setup:dev": "npm --prefix tooling ci --ignore-scripts",
+    "typecheck": "node scripts/typecheck.js",
+    "check": "node scripts/check.js && npm run typecheck",
+    "test": "node --import ./test/support/register-pi-loader.js --test test/unit/*.test.js",
+    "release:check": "npm run check && npm test && node scripts/release-check.js",
+    "prepublishOnly": "npm run check && npm test",
+    "test:paid:smoke": "node scripts/paid-test-runner.js smoke",
+    "test:paid:full": "node scripts/paid-test-runner.js full",
+    "test:paid:post-tools": "node scripts/paid-test-runner.js post-tools",
+    "test:paid:cache": "node scripts/paid-test-runner.js cache",
+    "test:paid:fable": "node scripts/paid-test-runner.js fable",
+    "test:paid:matrix": "node scripts/paid-test-runner.js matrix",
+    "test:paid:release": "node scripts/paid-test-runner.js release"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "typebox": { "optional": true }
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
