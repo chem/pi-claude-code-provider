@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { locatePiPackages, piCliEntry } from "../../scripts/lib/pi-installation.js";
 
@@ -21,10 +22,11 @@ test("locates Pi packages in the bundled Windows-installer layout", async () => 
     await writeFile(join(typebox, "package.json"), JSON.stringify({ name: "typebox" }));
     process.env.PATH = `${prefix}${delimiter}${originalPath ?? ""}`;
     const packages = locatePiPackages();
+    const canonicalPrefix = dirname(realpathSync(shim));
     assert.deepEqual(packages, {
-      codingAgent: await realpath(codingAgent),
-      piAi: await realpath(piAi),
-      typebox: await realpath(typebox),
+      codingAgent: join(canonicalPrefix, "node_modules", "@earendil-works", "pi-coding-agent"),
+      piAi: join(canonicalPrefix, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai"),
+      typebox: join(canonicalPrefix, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "typebox"),
     });
     assert.equal(piCliEntry(codingAgent), join(codingAgent, "dist", "cli.js"));
   } finally {
