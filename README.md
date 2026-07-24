@@ -45,6 +45,8 @@ The same canonical reference works from the command line with `pi --model pi-cla
 
 Pi thinking levels map to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values. Unsupported levels are hidden. Opus uses a safe 200K context window on Pro and 1M on Max, Team, and Enterprise. Claude Code may report the 1M-capable Opus variant on Pro even when usage credits are disabled; the provider keeps Pi's configured limit at 200K because it cannot determine credit availability.
 
+**A note about model self-identification:** Asking Claude “what model are you?” is not a reliable way to verify the served model. Pi's coding-tool prompt and schemas can cause Claude to confidently name an older Sonnet version even when Claude Code served Opus. That answer is generated text, not routing metadata; use the assistant message's `responseModel` field in Pi's JSON output when you need the concrete served model. Pi's status line shows the requested provider alias.
+
 After installation or an upstream update, run:
 
 ```text
