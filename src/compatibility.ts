@@ -1,8 +1,8 @@
 import { release } from "node:os";
 
 export const VERIFIED_VERSIONS = Object.freeze({
-  pi: "0.80.10",
-  claudeCode: "2.1.215",
+  pi: "0.82.0",
+  claudeCode: "2.1.219",
 });
 
 const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64";
@@ -11,7 +11,7 @@ export const EXPECTED_MODEL_RESOLUTIONS = Object.freeze({
   default: "claude-sonnet-5",
   sonnet: "claude-sonnet-5",
   fable: "claude-fable-5",
-  opus: "claude-opus-4-8",
+  opus: "claude-opus-5",
   haiku: "claude-haiku-4-5-20251001",
 });
 

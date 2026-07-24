@@ -37,8 +37,8 @@ Machine-readable values live in `src/compatibility.ts`; update code and this tab
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.80.10 |
-| Claude Code | 2.1.215 |
+| Pi | 0.82.0 |
+| Claude Code | 2.1.219 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
 
@@ -57,6 +57,7 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | `npm run test:paid:full` | 28 |
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
+| `npm run test:paid:opus` | 1 |
 | `npm run test:paid:matrix` | 21 |
 | `npm run test:paid:release` | 52 |
 

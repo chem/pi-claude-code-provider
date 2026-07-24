@@ -9,8 +9,8 @@ This project was developed using frontier AI models under human guidance. Almost
 ## Requirements
 
 - Node.js 22.19 or newer
-- [Pi](https://pi.dev), verified with 0.80.10
-- Claude Code, verified with 2.1.215
+- [Pi](https://pi.dev), verified with 0.82.0
+- Claude Code, verified with 2.1.219
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 
 WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) on Node.js 24.16.0; subscription-consuming live validation on macOS remains pending. Other platforms continue with a warning and runtime capability checks.
@@ -43,7 +43,7 @@ To select one directly:
 
 The same canonical reference works from the command line with `pi --model pi-claude-code-provider/sonnet`.
 
-Pi thinking levels map to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values. Unsupported levels are hidden. Opus context metadata is selected from the authenticated subscription class.
+Pi thinking levels map to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values. Unsupported levels are hidden. Opus uses a safe 200K context window on Pro and 1M on Max, Team, and Enterprise. Claude Code may report the 1M-capable Opus variant on Pro even when usage credits are disabled; the provider keeps Pi's configured limit at 200K because it cannot determine credit availability.
 
 After installation or an upstream update, run:
 

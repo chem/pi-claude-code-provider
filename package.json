@@ -43,6 +43,7 @@
     "test:paid:post-tools": "node scripts/paid-test-runner.js post-tools",
     "test:paid:cache": "node scripts/paid-test-runner.js cache",
     "test:paid:fable": "node scripts/paid-test-runner.js fable",
+    "test:paid:opus": "node scripts/paid-test-runner.js opus",
     "test:paid:matrix": "node scripts/paid-test-runner.js matrix",
     "test:paid:release": "node scripts/paid-test-runner.js release"
   },
