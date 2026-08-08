@@ -6,9 +6,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { BRIDGE_PATH } from "../../src/claude-args.ts";
 import { JsonlParser } from "../../src/jsonl.ts";
+import { nodeFixtureArgs } from "../support/node-fixture.js";
 
+// These tests exercise live stdin sent to a nested Node child. Some restricted
+// sandboxes drop that pipe traffic, causing request timeouts despite a healthy
+// bridge. Run them outside the sandbox; normal shells and GitHub CI preserve it.
 test("MCP bridge lists exact schemas and refuses execution", async () => {
-  await exerciseBridge({ name: "Node", command: process.execPath, args: [BRIDGE_PATH] });
+  // Test-launch the real bridge with the preload; production bridge output stays untouched.
+  await exerciseBridge({ name: "Node", command: process.execPath, args: nodeFixtureArgs([BRIDGE_PATH]) });
 });
 
 test("Node bridge fails closed on malformed input and malformed catalogs", async () => {
@@ -16,7 +21,7 @@ test("Node bridge fails closed on malformed input and malformed catalogs", async
   const catalog = join(directory, "tools.json");
   try {
     await writeFile(catalog, "not json", { mode: 0o600 });
-    const invalidCatalog = spawn(process.execPath, [BRIDGE_PATH], {
+    const invalidCatalog = spawn(process.execPath, nodeFixtureArgs([BRIDGE_PATH]), {
       env: { ...process.env, PI_CLAUDE_TOOL_CATALOG: catalog },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -30,7 +35,7 @@ test("Node bridge fails closed on malformed input and malformed catalogs", async
     assert.match(Buffer.concat(stderr).toString("utf8"), /invalid tool catalog/);
 
     await writeFile(catalog, "[]", { mode: 0o600 });
-    const child = spawn(process.execPath, [BRIDGE_PATH], {
+    const child = spawn(process.execPath, nodeFixtureArgs([BRIDGE_PATH]), {
       env: { ...process.env, PI_CLAUDE_TOOL_CATALOG: catalog },
       stdio: ["pipe", "pipe", "pipe"],
     });

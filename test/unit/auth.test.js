@@ -7,6 +7,7 @@ import { buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, val
 import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { validateProcessTerminationCapability, windowsTaskkillExecutable } from "../../src/process-utils.ts";
 import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
+import { nodeFixtureSource } from "../support/node-fixture.js";
 
 const bracketedSystemPromptHelp = CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]");
 
@@ -51,14 +52,16 @@ test("requires the Claude Code headless command surface", () => {
     assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--permission-mode", "")), /--permission-mode/);
 });
 
+// Fake Claude programs use synchronous test-only stdio because some restricted
+// sandboxes lose buffered output from nested Node children despite a zero exit.
 test("resolves a directly launchable Claude executable through Windows PATHEXT", { skip: process.platform !== "win32" }, async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-path-"));
     const claude = join(directory, "claude.cjs");
-    await writeFile(claude, `
+    await writeFile(claude, nodeFixtureSource(`
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
 else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
 else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
-`);
+`));
     const original = {
         path: process.env.PATH,
         pathExt: process.env.PATHEXT,
@@ -89,11 +92,11 @@ test("validates the built-in Windows taskkill capability without PATH lookup", {
 test("preflight honors and functionally validates the Claude executable override", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-"));
     const claude = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
-    await writeFile(claude, `#!/usr/bin/env node
+    await writeFile(claude, nodeFixtureSource(`
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
 else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
 else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
-`, { mode: 0o700 });
+`), { mode: 0o700 });
     await chmod(claude, 0o700);
     const originalClaude = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
     process.env.PI_CLAUDE_CODE_PROVIDER_PATH = claude;

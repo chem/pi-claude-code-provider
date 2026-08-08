@@ -9,6 +9,7 @@ import { PAID_LAUNCH_BUDGET_ENV } from "../../src/paid-launch-budget.ts";
 import { closeLiveRpcProcess, consumeJsonl, superviseLiveProcess } from "../../scripts/lib/live-process.js";
 import { piCliEntry } from "../../scripts/lib/pi-installation.js";
 import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
+import { nodeFixtureArgs, nodeFixtureSource } from "../support/node-fixture.js";
 import { spawn } from "node:child_process";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -16,7 +17,8 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 async function fakeClaude(directory) {
   const executable = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
   const init = { type: "system", subtype: "init", tools: [], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" };
-  await writeFile(executable, `#!/usr/bin/env node
+  // This fake CLI must not rely on buffered child stdout in restricted sandboxes.
+  await writeFile(executable, nodeFixtureSource(`
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
 else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH)}));
 else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
@@ -27,7 +29,7 @@ else {
     process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"OK"}) + "\\n");
   });
 }
-`, { mode: 0o700 });
+`), { mode: 0o700 });
   await chmod(executable, 0o700);
   return executable;
 }
@@ -40,11 +42,12 @@ test("paid RPC accounting flushes one metric for every claim before graceful exi
   await mkdir(stageDirectory);
   await mkdir(aggregateDirectory);
   const executable = await fakeClaude(directory);
-  const child = spawn(process.execPath, [
+  // Preload only the test-launched Pi process; runtime Pi behavior stays unchanged.
+  const child = spawn(process.execPath, nodeFixtureArgs([
     piCliEntry(), "--mode", "rpc", "--no-session", "--no-extensions", "-e", root,
     "--no-skills", "--no-context-files", "--provider", "pi-claude-code-provider",
     "--model", "sonnet:medium", "--no-tools",
-  ], {
+  ]), {
     cwd: directory,
     detached: process.platform !== "win32",
     windowsHide: process.platform === "win32",

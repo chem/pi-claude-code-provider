@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createClaudeStream, isExpectedToolHandoffExit, waitForReadyOrExit } from "../../src/provider.ts";
 import { getLastRequestMetrics } from "../../src/metrics.ts";
+import { nodeFixtureSource } from "../support/node-fixture.js";
 const model = {
     id: "sonnet",
     name: "Sonnet",
@@ -21,7 +22,9 @@ const context = { messages: [{ role: "user", content: "hello", timestamp: 1 }], 
 async function fakeClaude(body, { writeReady = true } = {}) {
     const dir = await mkdtemp(join(tmpdir(), "fake-claude-"));
     const executable = join(dir, process.platform === "win32" ? "claude.cjs" : "claude");
-    await writeFile(executable, `#!/usr/bin/env node
+    // Fake protocol output is synchronous only in this test child; some sandboxes
+    // otherwise hide buffered Node stdout even when the child exits successfully.
+    await writeFile(executable, nodeFixtureSource(`
 	const fs = require("node:fs");
 	${writeReady ? `
 	const mcpIndex = process.argv.indexOf("--mcp-config");
@@ -30,7 +33,7 @@ async function fakeClaude(body, { writeReady = true } = {}) {
   const ready = config.mcpServers?.pi?.env?.PI_CLAUDE_TOOL_READY;
   if (ready) fs.writeFileSync(ready, "ready\\n", { flag: "wx" });
 	}` : ""}
-	${body}\n`);
+	${body}\n`));
     await chmod(executable, 0o700);
     return { dir, executable };
 }
@@ -406,6 +409,9 @@ process.stdin.on("end", () => {
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
+// These cases start the real MCP bridge. Restricted sandboxes can drop live
+// stdin to nested Node children, which makes readiness time out independently
+// of provider behavior; run this integration coverage outside the sandbox.
 test("provider checks MCP execution violations after tool-use termination", async () => {
     const fake = await fakeClaude(`
 const violationConfigIndex = process.argv.indexOf("--mcp-config");

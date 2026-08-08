@@ -7,6 +7,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-work
 import initializePiClaudeCodeProvider from "../../extensions/pi-claude-code-provider.ts";
 import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
+import { nodeFixtureSource } from "../support/node-fixture.js";
 
 const piClaudeCodeProvider = (pi) => initializePiClaudeCodeProvider(pi);
 
@@ -40,7 +41,8 @@ async function createFakeClaude(searchResult = "ok", { searchDelayMs = 0, rateLi
     const rateLimitEvents = Array.isArray(rateLimitInfo) ? rateLimitInfo : rateLimitInfo ? [rateLimitInfo] : [];
     const init = { type: "system", subtype: "init", tools: ["WebFetch", "WebSearch"], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" };
     const providerInit = { ...init, tools: [] };
-    await writeFile(executable, `#!/usr/bin/env node
+    // Keep fake Claude JSONL visible in sandboxes that lose buffered Node child stdout.
+    await writeFile(executable, nodeFixtureSource(`
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
 else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH)}));
 else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
@@ -52,7 +54,7 @@ else {
     process.stdout.write(JSON.stringify({type:"result",is_error:false,result:${JSON.stringify(searchResult)}}) + "\\n");
   }, ${searchDelayMs});
 }
-`, { mode: 0o700 });
+`), { mode: 0o700 });
     await chmod(executable, 0o700);
     return { directory, executable };
 }

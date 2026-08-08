@@ -7,6 +7,7 @@ import test from "node:test";
 import { getLastSearchMetrics } from "../../src/metrics.ts";
 import { superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
 import { searchWithClaude } from "../../src/web-search.ts";
+import { nodeFixtureSource } from "../support/node-fixture.js";
 
 const searchInit = {
     type: "system", subtype: "init", tools: ["WebFetch", "WebSearch"], mcp_servers: [], model: "claude-sonnet-5",
@@ -16,7 +17,9 @@ const searchInit = {
 async function fakeSearch(body) {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-search-fake-"));
     const executable = join(directory, process.platform === "win32" ? "fake-claude.cjs" : "fake-claude");
-    await writeFile(executable, `#!/usr/bin/env node\n${body}\n`, { mode: 0o700 });
+    // Nested Node child stdout can disappear in restricted sandboxes; use the
+    // shared test-only preload so a missing init remains a real protocol failure.
+    await writeFile(executable, nodeFixtureSource(body), { mode: 0o700 });
     await chmod(executable, 0o700);
     return { directory, executable };
 }
@@ -38,12 +41,12 @@ function supervisorWithCleanupFailure(child, options) {
 test("web search uses a relative private request reference and validates its result", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-search-test-"));
     const executable = join(directory, process.platform === "win32" ? "fake-claude.cjs" : "fake-claude");
-    await writeFile(executable, `#!/usr/bin/env node
+    await writeFile(executable, nodeFixtureSource(`
 const prompt = process.argv.find((arg) => arg.startsWith("Research the query")) ?? "";
 if (!prompt.includes("@./search-request.json") || prompt.includes(process.cwd() + "/search-request.json")) process.exit(7);
 process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");
 process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "sourced result" }) + "\\n");
-`, { mode: 0o700 });
+`), { mode: 0o700 });
     await chmod(executable, 0o700);
     try {
         const installation = { executable, version: "test", subscriptionType: "pro" };

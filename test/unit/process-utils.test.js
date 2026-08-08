@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
+import { nodeFixtureArgs } from "../support/node-fixture.js";
 
 async function assertProcessGone(pid) {
     await assert.rejects(async () => {
@@ -47,8 +48,10 @@ test("supervisor reports only the first pipe failure", async () => {
     assert.deepEqual(failures, ["Claude Code stdin failed: EPIPE"]);
 });
 test("Windows termination removes only the exact owned process tree", { skip: process.platform !== "win32" }, async () => {
+    // PID-reporting children use the preload because restricted sandboxes can
+    // discard buffered Node stdout while leaving the process exit successful.
     const body = `const {spawn}=require("node:child_process"); const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}); process.stdout.write(String(child.pid)+"\\n"); setInterval(()=>{},1000);`;
-    const target = spawn(process.execPath, ["-e", body], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    const target = spawn(process.execPath, nodeFixtureArgs(["-e", body]), { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     const unrelated = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true });
     try {
         const descendantPid = await new Promise((resolve) => target.stdout.once("data", (chunk) => resolve(Number(chunk.toString().trim()))));
@@ -64,7 +67,7 @@ test("Windows termination removes only the exact owned process tree", { skip: pr
 });
 test("process-group termination removes a descendant", { skip: process.platform === "win32" }, async () => {
     const body = `const {spawn}=require("node:child_process"); const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}); process.stdout.write(String(child.pid)+"\\n"); setInterval(()=>{},1000);`;
-    const parent = spawn(process.execPath, ["-e", body], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    const parent = spawn(process.execPath, nodeFixtureArgs(["-e", body]), { detached: true, stdio: ["ignore", "pipe", "ignore"] });
     const pid = await new Promise((resolve) => parent.stdout.once("data", (chunk) => resolve(Number(chunk.toString().trim()))));
     await terminateProcessGroup(parent);
     await assertProcessGone(pid);
@@ -109,7 +112,7 @@ test("process-group termination reports signal permission failures with context"
 });
 test("process-group termination removes a descendant after its leader exits", { skip: process.platform === "win32" }, async () => {
     const body = `const {spawn}=require("node:child_process"); const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}); child.unref(); process.stdout.write(String(child.pid)+"\\n");`;
-    const parent = spawn(process.execPath, ["-e", body], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    const parent = spawn(process.execPath, nodeFixtureArgs(["-e", body]), { detached: true, stdio: ["ignore", "pipe", "ignore"] });
     const pid = await new Promise((resolve) => parent.stdout.once("data", (chunk) => resolve(Number(chunk.toString().trim()))));
     await new Promise((resolve) => parent.once("close", resolve));
     await terminateProcessGroup(parent);
