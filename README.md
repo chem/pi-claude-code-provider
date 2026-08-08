@@ -61,7 +61,7 @@ The package also registers `pi_claude_code_provider_web_search`, a visible Pi to
 
 ## Subscription usage
 
-Provider and web-search requests consume Claude subscription capacity. Optional usage credits may incur additional spend after plan limits. The package reports Claude's token counts when available and reports zero monetary cost because it cannot determine how a subscription request was billed.
+Provider and web-search requests consume Claude subscription capacity. A cancellation received before Claude is launched starts no Claude request; a request already running can consume capacity before termination. Optional usage credits may incur additional spend after plan limits. The package reports Claude's token counts when available and reports zero monetary cost because it cannot determine how a subscription request was billed.
 
 Anthropic documents [`claude -p` / `--print`](https://code.claude.com/docs/en/cli-reference) as its non-interactive CLI interface, explains that [third-party usage draws from subscription limits](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), and documents [subscription authentication and usage credits](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan). This project uses that public interface without claiming Anthropic endorsement.
 

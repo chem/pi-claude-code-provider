@@ -263,10 +263,25 @@ setInterval(() => {}, 1000);`);
     }
 });
 
-test("web search handles abort and timeout", async () => {
+test("web search handles pre-launch abort, abort, and timeout", async () => {
+    const preCancelled = await fakeSearch(`
+const fs = require("node:fs");
+const path = require("node:path");
+fs.writeFileSync(path.join(__dirname, "spawned"), "spawned");`);
     const hanging = await fakeSearch(`setInterval(() => {}, 1000);`);
     const installation = { executable: hanging.executable, version: "test", subscriptionType: "pro" };
     try {
+        const cancelledBeforeLaunch = new AbortController();
+        cancelledBeforeLaunch.abort();
+        await assert.rejects(
+            searchWithClaude({ executable: preCancelled.executable, version: "test", subscriptionType: "pro" }, "query", undefined, cancelledBeforeLaunch.signal),
+            /cancelled/,
+        );
+        await assert.rejects(access(join(preCancelled.directory, "spawned")));
+        const preLaunchMetrics = getLastSearchMetrics();
+        assert.equal(preLaunchMetrics.errorCategory, "aborted");
+        assert.equal(preLaunchMetrics.cleanupComplete, true);
+
         const controller = new AbortController();
         const aborted = searchWithClaude(installation, "query", undefined, controller.signal, 1000);
         setTimeout(() => controller.abort(), 20);
@@ -274,6 +289,7 @@ test("web search handles abort and timeout", async () => {
         await assert.rejects(searchWithClaude(installation, "query", undefined, undefined, 30), /no protocol activity for 30ms|exceeded 30ms/);
     }
     finally {
+        await rm(preCancelled.directory, { recursive: true, force: true });
         await rm(hanging.directory, { recursive: true, force: true });
     }
 });

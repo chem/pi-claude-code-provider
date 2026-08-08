@@ -37,7 +37,7 @@ On POSIX, Claude runs as a detached process-group leader and cleanup targets the
 
 System prompts, transcript attachments, catalogs, and markers live in randomized temporary directories. POSIX uses mode 0700 directories and mode 0600 files. Windows relies on the per-user temporary root's ACL. Generated image names are content-addressed, bounded, and independent of user filenames.
 
-Normal success, failure, timeout, and cancellation remove private request state. A bounded POSIX recovery pass removes only old, same-user, package-marked directories whose recorded processes are gone. Windows does not perform automatic stale recovery because Node provides no equivalent ownership check.
+Cancellation is checked before launch, so an already-cancelled provider or web-search request starts no Claude process; after launch, cancellation terminates the owned process. Normal success, failure, timeout, and cancellation remove private request state. A bounded POSIX recovery pass removes only old, same-user, package-marked directories whose recorded processes are gone. Windows does not perform automatic stale recovery because Node provides no equivalent ownership check.
 
 Host crashes and forceful termination can bypass cleanup. On Windows, `taskkill` cannot reconstruct descendants after their root exits, so normal Claude shutdown is trusted to close its children. Name-based termination is deliberately prohibited because it could kill unrelated sessions.
 
