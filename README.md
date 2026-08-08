@@ -45,7 +45,7 @@ The same canonical reference works from the command line with `pi --model pi-cla
 
 Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability.
 
-The `fable` alias is offered but unvalidated: Fable 5 requires usage credits and is not served through subscription plans. It otherwise follows the standard alias path wherever the plan or credits allow it.
+The `fable` alias is offered and separately testable, but it is excluded from the paid release gate. Fable 5 availability, included allocation, and billing vary by subscription tier. It otherwise follows the standard alias path wherever the account allows it. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
 
 **Model identity:** self-identification is generated text, not routing metadata, and Pi's coding-tool prompt and schemas can make Claude name an older Sonnet even when Claude Code served Opus. Use the assistant message's `responseModel` field in Pi's JSON output for the served model; Pi's status line shows the requested alias.
 

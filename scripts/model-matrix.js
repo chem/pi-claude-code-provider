@@ -22,9 +22,9 @@ const efforts = ["low", "medium", "high", "xhigh", "max"];
 const effortModels = ["default", "sonnet", "opus", "haiku"];
 const advertisedModels = providerModels.map((model) => model.id);
 assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), advertisedModels, "compatibility targets must match advertised models");
-// Fable 5 is not served through subscription plans, so Claude rejects it with a
-// usage-credits 429 that says nothing about this package. It is excluded from
-// the blocking gate and stays selectable for accounts that enable credits.
+// Fable 5 availability and included quota vary by subscription tier. It is
+// intentionally opt-in and excluded from the blocking gate; the standalone
+// case remains selectable for accounts with Fable access.
 const ungatedModels = new Set(["fable"]);
 const mediumOnlyModels = advertisedModels.filter((model) => !effortModels.includes(model));
 const coreCases = [

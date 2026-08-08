@@ -5,7 +5,7 @@ This document owns the maintained architecture and security model. Code is autho
 ## Invariants
 
 1. Pi owns the system prompt, current branch, compaction, active tools, tool execution, model selection, and cancellation.
-2. Except for organization-trusted Claude Code managed policy, Claude may propose Pi tools but may not execute file, shell, web, MCP, plugin, hook, browser, agent, or memory capabilities invisibly.
+2. Except for organization-trusted Claude Code managed policy, the main provider's Claude process may propose Pi tools but may not execute file, shell, web, MCP, plugin, hook, browser, agent, or memory capabilities invisibly. The separately invoked visible Pi web-search tool is the narrowly scoped exception described below.
 3. Provider failures are errors, never successful-looking assistant text.
 4. Subscription use is not reported as API billing.
 5. External interfaces are capability-checked and mismatches fail closed.
@@ -17,7 +17,7 @@ This document owns the maintained architecture and security model. Code is autho
 
 Validated initialization is the transport's response boundary: capabilities are known and no content has been published. The provider announces it to Pi's `after_provider_response` observers with a synthetic success status and no headers, because the headless protocol exposes no HTTP response. The observer completes before body events are mapped; a failing observer fails the request.
 
-Each request serializes the effective system prompt, messages, and active tools into a versioned semantic transcript. Separate append-stable records preserve model-visible text, reasoning, tool calls, tool results, and images while omitting operational metadata, prior errors, usage fields, signatures, and UI-only details. Historical tool results pair by `toolCallId`.
+Each request serializes the effective system prompt, messages, and active tools into a versioned semantic transcript. Separate append-stable records preserve model-visible text, reasoning, tool calls, tool results, and images while omitting operational metadata, provider error messages, usage fields, signatures, and UI-only details. Tool-result `isError` state is preserved so historical failures remain meaningful. Historical tool results pair by `toolCallId`.
 
 Literal at signs are JSON Unicode-escaped because Claude expands `@path` syntax. Only provider-generated, validated images remain attachment references.
 
@@ -44,6 +44,8 @@ Host crashes and forceful termination can bypass cleanup. On Windows, `taskkill`
 ## Web search
 
 `pi_claude_code_provider_web_search` is a visible Pi tool backed by a separate Claude process restricted to WebSearch and WebFetch. Initialization must confirm the exact tool inventory, `dontAsk`, no unexpected MCP server or customization, and subscription-backed authentication.
+
+The outer Pi tool invocation is visible in Pi; Claude's inner WebSearch and WebFetch calls are intentionally restricted but are not individual Pi tool executions.
 
 The query is supplied through a private generated file. Output is validated and bounded; truncated full output may be retained in a session-scoped private file that is removed at shutdown. The main provider never gains invisible web access.
 

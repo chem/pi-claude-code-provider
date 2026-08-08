@@ -19,7 +19,8 @@ const stages = {
   full: { label: "full live", cap: 28, script: "live-test.js", args: ["--full"] },
   "post-tools": { label: "post-tool live", cap: 6, script: "live-test.js", args: ["--post-tools"] },
   cache: { label: "cache", cap: 3, script: "live-test.js", args: ["--cache"] },
-  // Fable 5 requires usage credits, so it is opt-in and never part of the gate.
+  // Fable 5 availability and included quota vary by subscription tier, so its
+  // one-launch case is opt-in and excluded from the blocking gate.
   fable: { label: "fable model", cap: 1, script: "model-matrix.js", args: ["--case", "fable:medium"] },
   opus: { label: "opus model", cap: 1, script: "model-matrix.js", args: ["--case", "opus:medium"] },
   matrix: { label: "model matrix", cap: 20, script: "model-matrix.js", args: [] },

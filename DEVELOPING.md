@@ -33,7 +33,7 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 
 ## Compatibility baseline
 
-Machine-readable values live in `src/compatibility.ts`; update code and this table together only after the applicable validation gate passes.
+`src/compatibility.ts` owns Pi/Claude version, platform, and model-resolution values; `.github/workflows/ci.yml` owns the Node CI matrix. Update the relevant source and this table together only after the applicable validation gate passes.
 
 | Component | Verified baseline |
 | --- | --- |
@@ -61,7 +61,7 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | `npm run test:paid:matrix` | 20 |
 | `npm run test:paid:release` | 51 |
 
-The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, the gated aliases, and the supported effort matrix. Fable 5 is not served through subscription plans, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains available for accounts with usage credits enabled. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, the gated aliases, and the supported effort matrix. Fable 5 availability, included quota, and billing vary by subscription tier, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains the opt-in one-launch case for accounts with Fable access. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization.
 
