@@ -122,24 +122,18 @@ export function createClaudeStream(
 
       // Claude Code's headless protocol has no HTTP response to report, so a
       // validated initialization is announced with a synthetic success status
-      // and no headers, matching how Pi's own non-HTTP providers observe one.
-      const announceResponse = (): void => {
+      // and no headers. Pi requires that an asynchronous observer finish
+      // before its response body is mapped or published.
+      const announceResponse = async (): Promise<void> => {
         const observe = options?.onResponse;
         if (!observe) return;
         const response: ProviderResponse = { status: 200, headers: {} };
-        let pending: void | Promise<void>;
         try {
-          pending = observe(response, model);
+          await observe(response, model);
         } catch (error) {
-          // Thrown synchronously from the mapper, so the caller's protocol
-          // handler fails the request and terminates the Claude process tree.
+          errorCategory ??= "response_hook";
           throw new ClaudeCodeError("response_hook", `Pi after_provider_response handler failed: ${errorText(error)}`);
         }
-        void Promise.resolve(pending).catch((error: unknown) => {
-          errorCategory ??= "response_hook";
-          mapper?.fail(`Pi after_provider_response handler failed: ${errorText(error)}`);
-          terminateInBackground();
-        });
       };
 
       const stopForToolUse = (): void => {
@@ -254,35 +248,51 @@ export function createClaudeStream(
 
         await recordRuntimeChild(prepared.directory, child.pid ?? 0);
 
+        let recordProcessing = Promise.resolve();
+        const failProtocol = (error: unknown): void => {
+          if (mapper?.isTerminal) return;
+          errorCategory ??= error instanceof ClaudeCodeError ? error.code : "protocol";
+          mapper?.fail(errorText(error));
+          terminateInBackground();
+        };
         const parser = new JsonlParser((value) => {
-          supervisor?.touch();
-          mapper?.accept(value, terminationCause);
+          recordProcessing = recordProcessing
+            .then(async () => {
+              if (mapper?.isTerminal) return;
+              supervisor?.touch();
+              mapper?.accept(value, terminationCause);
+              await mapper?.settleResponseAnnouncement();
+            })
+            .catch((error: unknown) => failProtocol(error));
         });
         let resolveStdout: (() => void) | undefined;
         const stdoutDone = new Promise<void>((resolve) => {
           resolveStdout = resolve;
         });
+        let stdoutFinished = false;
+        const finishStdout = (): void => {
+          if (stdoutFinished) return;
+          stdoutFinished = true;
+          try {
+            parser.end();
+          } catch (error) {
+            failProtocol(error);
+          }
+          void recordProcessing.then(
+            () => resolveStdout?.(),
+            () => resolveStdout?.(),
+          );
+        };
         child.stdout?.on("data", (chunk: Buffer) => {
           try {
             parser.push(chunk);
           } catch (error) {
-            errorCategory = error instanceof ClaudeCodeError ? error.code : "protocol";
-            mapper?.fail(errorText(error));
-            terminateInBackground();
+            failProtocol(error);
           }
         });
-        child.stdout?.on("end", () => {
-          try {
-            parser.end();
-          } catch (error) {
-            errorCategory = error instanceof ClaudeCodeError ? error.code : "protocol";
-            mapper?.fail(errorText(error));
-            terminateInBackground();
-          } finally {
-            resolveStdout?.();
-          }
-        });
-        child.stdout?.once("close", () => resolveStdout?.());
+        child.stdout?.on("end", finishStdout);
+        child.stdout?.once("close", finishStdout);
+        if (!child.stdout) finishStdout();
         child.stderr?.on("data", (chunk: Buffer) => {
           stderr = `${stderr}${chunk.toString("utf8")}`.slice(-MAX_STDERR_BYTES);
         });

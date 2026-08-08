@@ -85,7 +85,7 @@ Metrics exclude prompts, messages, queries, output, credentials, stderr, and tem
 
 ## Security and troubleshooting
 
-Pi packages run with the user's permissions. Review the source before installation and treat model-visible context like any other Claude Code prompt. Main requests suppress Claude customizations and local tools, validate the initialized capability inventory, and remove private request state before reporting success. Abrupt host termination can still leave state behind. See [DESIGN.md](DESIGN.md) for the security model and [SECURITY.md](SECURITY.md) for vulnerability reporting.
+Pi packages run with the user's permissions. Review the source before installation and treat model-visible context like any other Claude Code prompt. Main requests suppress unmanaged user and project Claude customizations and local tools, validate the initialized capability inventory, and remove private request state before reporting success. Claude Code administrator-managed settings, hooks, and MCP policy are an organization-trusted boundary and can take effect before that validation. Abrupt host termination can still leave state behind. See [DESIGN.md](DESIGN.md) for the security model and [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 - **Provider missing:** run the doctor, correct the reported problem, then run `/reload`.
 - **Authentication rejected:** run `claude auth status` and log in with an eligible first-party subscription.

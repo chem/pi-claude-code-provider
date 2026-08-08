@@ -823,22 +823,83 @@ test("provider reports a synthetic response to Pi before streaming content", asy
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
-test("provider fails the request when Pi's response handler rejects", async () => {
+test("provider waits for Pi's async response handler before streaming content", async () => {
     const fake = await fakeClaude(textResponseBody);
+    let releaseResponse;
+    let responseStarted;
+    const responseGate = new Promise((resolve) => {
+        releaseResponse = resolve;
+    });
+    const responseEntered = new Promise((resolve) => {
+        responseStarted = resolve;
+    });
     try {
+        const events = [];
         const stream = createClaudeStream({
             executable: fake.executable,
             version: "2.1.206",
             subscriptionType: "pro",
         })(model, context, {
             reasoning: "medium",
-            onResponse() {
-                return Promise.reject(new Error("observer rejected"));
+            async onResponse() {
+                responseStarted();
+                await responseGate;
+                events.push("response");
             },
         });
+        const consume = (async () => {
+            for await (const event of stream)
+                events.push(event.type);
+        })();
+        await responseEntered;
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(events, []);
+        releaseResponse();
+        await consume;
+        const result = await stream.result();
+        assert.equal(result.stopReason, "stop", result.errorMessage);
+        assert.deepEqual(events, ["response", "start", "text_start", "text_delta", "text_end", "done"]);
+    }
+    finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider fails before streaming when Pi's async response handler rejects", async () => {
+    const fake = await fakeClaude(textResponseBody);
+    let rejectResponse;
+    let responseStarted;
+    const responseGate = new Promise((_, reject) => {
+        rejectResponse = reject;
+    });
+    const responseEntered = new Promise((resolve) => {
+        responseStarted = resolve;
+    });
+    try {
+        const events = [];
+        const stream = createClaudeStream({
+            executable: fake.executable,
+            version: "2.1.206",
+            subscriptionType: "pro",
+        })(model, context, {
+            reasoning: "medium",
+            async onResponse() {
+                responseStarted();
+                await responseGate;
+            },
+        });
+        const consume = (async () => {
+            for await (const event of stream)
+                events.push(event.type);
+        })();
+        await responseEntered;
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(events, []);
+        rejectResponse(new Error("observer rejected"));
+        await consume;
         const result = await stream.result();
         assert.equal(result.stopReason, "error");
         assert.match(result.errorMessage ?? "", /after_provider_response handler failed: .*observer rejected/);
+        assert.deepEqual(events, ["error"]);
         const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "response_hook");
         assert.equal(metrics.stopReason, "error");
     }

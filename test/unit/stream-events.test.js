@@ -486,6 +486,44 @@ test("announces one validated response before publishing any content", async () 
     assert.equal(observed.filter((entry) => entry.startsWith("announced:")).length, 1);
     assert.equal(output.stopReason, "stop");
 });
+test("waits for an asynchronous response announcement before publishing start", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const observed = [];
+    let releaseAnnouncement;
+    const announcement = new Promise((resolve) => {
+        releaseAnnouncement = resolve;
+    });
+    const mapper = new ClaudeEventMapper(
+        stream,
+        output,
+        new Set(),
+        new Map(),
+        () => { },
+        () => { },
+        async () => {
+            observed.push("announced");
+            await announcement;
+            observed.push("released");
+        },
+    );
+    const consume = (async () => {
+        for await (const event of stream)
+            observed.push(event.type);
+    })();
+    init(mapper);
+    assert.deepEqual(observed, ["announced"]);
+    assert.throws(
+        () => mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_pending", model: "claude-sonnet-5", usage: {} } } }),
+        /before Pi response observers completed/,
+    );
+    releaseAnnouncement();
+    await mapper.settleResponseAnnouncement();
+    mapper.accept({ type: "result", is_error: false, result: "" });
+    mapper.completeResult();
+    await consume;
+    assert.deepEqual(observed, ["announced", "released", "start", "done"]);
+});
 test("does not announce a response when initialization is rejected", () => {
     let announcements = 0;
     const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(["mcp__pi__calculate"]), new Map(), () => { }, () => { }, () => {

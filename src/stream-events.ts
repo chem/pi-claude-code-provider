@@ -46,8 +46,8 @@ export interface RateLimitNotice {
 
 export type RateLimitNoticeSink = (notice: RateLimitNotice) => void;
 
-/** Publishes Pi's provider-response observation once the transport handshake validates. */
-export type ResponseAnnouncementSink = () => void;
+/** Publishes Pi's provider-response observation once the transport handshake validates. Async observers gate body mapping. */
+export type ResponseAnnouncementSink = () => void | Promise<void>;
 
 interface IndexedBlock {
   // The map key is Claude's source index; contentIndex identifies the matching
@@ -63,6 +63,8 @@ export type ClaudeTerminationCause = "none" | "tool_handoff" | "caller_abort";
 export class ClaudeEventMapper {
   private readonly blocks = new Map<number, IndexedBlock>();
   private initialized = false;
+  private responseStarted = false;
+  private responseAnnouncement: Promise<void> | undefined;
   private messageStarted = false;
   private messageStopped = false;
   private terminal = false;
@@ -120,6 +122,13 @@ export class ClaudeEventMapper {
     return this.rejectedRateLimit;
   }
 
+  /** Wait for an asynchronous response observer before mapping Claude's response body. */
+  async settleResponseAnnouncement(): Promise<void> {
+    if (!this.responseAnnouncement) return;
+    await this.responseAnnouncement;
+    this.startResponse();
+  }
+
   accept(value: unknown, terminationCause: ClaudeTerminationCause = "none"): void {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new ClaudeCodeError("protocol_shape", "Invalid Claude event record");
@@ -130,6 +139,9 @@ export class ClaudeEventMapper {
       return;
     }
     if (!this.initialized) throw new ClaudeCodeError("protocol_order", "Claude emitted a record before initialization");
+    if (!this.responseStarted) {
+      throw new ClaudeCodeError("protocol_order", "Claude emitted a response record before Pi response observers completed");
+    }
     if (this.resultReceived) throw new ClaudeCodeError("protocol_order", "Claude emitted a record after its result");
     if (record.type === "stream_event") {
       if (!record.event || typeof record.event !== "object") {
@@ -168,9 +180,16 @@ export class ClaudeEventMapper {
     this.initialized = true;
     // Validated initialization is this transport's analogue of a received
     // response: capabilities are known and no content has been published yet.
-    // Announcing here, before the start event, is what lets Pi's
+    // Announcing here, before the start event, lets Pi's
     // after_provider_response observers run ahead of any assistant content.
-    this.onResponseAnnouncement();
+    const announcement = this.onResponseAnnouncement();
+    if (isPromise(announcement)) this.responseAnnouncement = Promise.resolve(announcement);
+    else this.startResponse();
+  }
+
+  private startResponse(): void {
+    if (this.responseStarted || this.terminal) return;
+    this.responseStarted = true;
     this.stream.push({ type: "start", partial: this.output });
   }
 
@@ -601,6 +620,10 @@ function index(value: unknown): number {
     throw new ClaudeCodeError("protocol_index", `Invalid Claude content index: ${String(value)}`);
   }
   return value;
+}
+
+function isPromise(value: unknown): value is PromiseLike<void> {
+  return typeof value === "object" && value !== null && typeof (value as { then?: unknown }).then === "function";
 }
 
 function object(value: unknown, field: string): Record<string, unknown> {
