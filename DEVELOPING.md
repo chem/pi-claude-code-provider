@@ -37,8 +37,8 @@ Machine-readable values live in `src/compatibility.ts`; update code and this tab
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.82.0 |
-| Claude Code | 2.1.219 |
+| Pi | 0.84.1 |
+| Claude Code | 2.1.226 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
 
@@ -58,16 +58,18 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
 | `npm run test:paid:opus` | 1 |
-| `npm run test:paid:matrix` | 21 |
-| `npm run test:paid:release` | 52 |
+| `npm run test:paid:matrix` | 20 |
+| `npm run test:paid:release` | 51 |
 
-The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, every advertised alias, and the supported effort matrix. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, the gated aliases, and the supported effort matrix. Fable 5 is not served through subscription plans, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains available for accounts with usage credits enabled. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization.
 
 ## Platform and compatibility work
 
 Windows cleanup must remain rooted at the exact retained child PID. Never replace it with `/IM`, name-based PowerShell termination, or global process enumeration. Automatic stale-directory recovery stays disabled on Windows; inspect Node's temporary root and package markers before removing confirmed stale state.
+
+`streamSimple` owns both halves of Pi's provider request contract: apply the `onPayload` replacement before launching Claude, and invoke `onResponse` once initialization validates, before publishing content. Dropping either silently disables the matching Pi extension event for this provider.
 
 When updating Claude compatibility:
 

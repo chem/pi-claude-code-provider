@@ -46,6 +46,9 @@ export interface RateLimitNotice {
 
 export type RateLimitNoticeSink = (notice: RateLimitNotice) => void;
 
+/** Publishes Pi's provider-response observation once the transport handshake validates. */
+export type ResponseAnnouncementSink = () => void;
+
 interface IndexedBlock {
   // The map key is Claude's source index; contentIndex identifies the matching
   // position in output.content so mixed responses update the correct Pi block.
@@ -75,6 +78,7 @@ export class ClaudeEventMapper {
   private readonly toolNames: Map<string, string>;
   private readonly onToolUse: () => void;
   private readonly onRateLimitNotice: RateLimitNoticeSink;
+  private readonly onResponseAnnouncement: ResponseAnnouncementSink;
   private readonly emittedRateLimitNotices = new Set<string>();
   private assistantDiagnostic: string | undefined;
 
@@ -85,6 +89,7 @@ export class ClaudeEventMapper {
     toolNames: Map<string, string>,
     onToolUse: () => void,
     onRateLimitNotice: RateLimitNoticeSink = () => {},
+    onResponseAnnouncement: ResponseAnnouncementSink = () => {},
   ) {
     this.stream = stream;
     this.output = output;
@@ -92,6 +97,7 @@ export class ClaudeEventMapper {
     this.toolNames = toolNames;
     this.onToolUse = onToolUse;
     this.onRateLimitNotice = onRateLimitNotice;
+    this.onResponseAnnouncement = onResponseAnnouncement;
   }
 
   get isTerminal(): boolean {
@@ -160,6 +166,11 @@ export class ClaudeEventMapper {
       mcpServer: this.expectedTools.size === 0 ? "none" : "pi",
     });
     this.initialized = true;
+    // Validated initialization is this transport's analogue of a received
+    // response: capabilities are known and no content has been published yet.
+    // Announcing here, before the start event, is what lets Pi's
+    // after_provider_response observers run ahead of any assistant content.
+    this.onResponseAnnouncement();
     this.stream.push({ type: "start", partial: this.output });
   }
 

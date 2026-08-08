@@ -9,8 +9,8 @@ This project was developed using frontier AI models under human guidance. Almost
 ## Requirements
 
 - Node.js 22.19 or newer
-- [Pi](https://pi.dev), verified with 0.82.0
-- Claude Code, verified with 2.1.219
+- [Pi](https://pi.dev), verified with 0.84.1
+- Claude Code, verified with 2.1.226
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 
 WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) on Node.js 24.16.0; subscription-consuming live validation on macOS remains pending. Other platforms continue with a warning and runtime capability checks.
@@ -44,6 +44,8 @@ To select one directly:
 The same canonical reference works from the command line with `pi --model pi-claude-code-provider/sonnet`.
 
 Pi thinking levels map to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values. Unsupported levels are hidden. Opus uses a safe 200K context window on Pro and 1M on Max, Team, and Enterprise. Claude Code may report the 1M-capable Opus variant on Pro even when usage credits are disabled; the provider keeps Pi's configured limit at 200K because it cannot determine credit availability.
+
+The `fable` alias is offered but not validated, because Fable 5 is not served through subscription plans and Claude rejects it without usage credits. Nothing about it is provider-specific, so it should behave like the other aliases wherever your plan or credits allow it.
 
 **A note about model self-identification:** Asking Claude “what model are you?” is not a reliable way to verify the served model. Pi's coding-tool prompt and schemas can cause Claude to confidently name an older Sonnet version even when Claude Code served Opus. That answer is generated text, not routing metadata; use the assistant message's `responseModel` field in Pi's JSON output when you need the concrete served model. Pi's status line shows the requested provider alias.
 
@@ -88,6 +90,7 @@ Pi packages run with the user's permissions. Review the source before installati
 - **Authentication rejected:** run `claude auth status` and log in with an eligible first-party subscription.
 - **Compatibility warning:** compare the installed versions with [DEVELOPING.md](DEVELOPING.md#compatibility-baseline).
 - **Search unavailable:** allow `pi_claude_code_provider_web_search` in Pi's tool filters and check for a name collision.
+- **`pi auth check` reports `provider_not_found`:** that command does not load extensions, so it cannot see any extension-registered provider. Use `/pi-claude-code-provider-doctor` to check readiness.
 - **Stale Windows state after an abrupt exit:** stop the relevant Pi and Claude processes, locate Node's temporary directory with `node -p "require('node:os').tmpdir()"`, inspect package marker files, and remove only confirmed stale directories.
 
 ## Development and license

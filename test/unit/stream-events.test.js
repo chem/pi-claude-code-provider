@@ -463,3 +463,40 @@ test("preserves result errors and accepts future result stop reasons", async () 
     assert.equal(error.stopReason, "error");
     assert.match(error.errorMessage ?? "", /429.*actual API failure/);
 });
+test("announces one validated response before publishing any content", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    assert.equal(output.stopReason, "pending");
+    const observed = [];
+    const mapper = new ClaudeEventMapper(stream, output, new Set(), new Map(), () => { }, () => { }, () => observed.push(`announced:${output.stopReason}`));
+    const consume = (async () => {
+        for await (const event of stream)
+            observed.push(event.type);
+    })();
+    init(mapper);
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_announce", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    mapper.accept({ type: "result", is_error: false, result: "hi" });
+    mapper.completeResult();
+    await consume;
+    // The announcement precedes start, and the partial it describes is still pending.
+    assert.deepEqual(observed.slice(0, 2), ["announced:pending", "start"]);
+    assert.equal(observed.filter((entry) => entry.startsWith("announced:")).length, 1);
+    assert.equal(output.stopReason, "stop");
+});
+test("does not announce a response when initialization is rejected", () => {
+    let announcements = 0;
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(["mcp__pi__calculate"]), new Map(), () => { }, () => { }, () => {
+        announcements += 1;
+    });
+    assert.throws(() => mapper.accept({ type: "system", subtype: "init", tools: [], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" }));
+    assert.equal(announcements, 0);
+});
+test("surfaces a throwing response announcement to the protocol caller", () => {
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, () => { }, () => {
+        throw new Error("observer exploded");
+    });
+    assert.throws(() => init(mapper), /observer exploded/);
+});

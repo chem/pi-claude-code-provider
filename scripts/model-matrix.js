@@ -22,17 +22,26 @@ const efforts = ["low", "medium", "high", "xhigh", "max"];
 const effortModels = ["default", "sonnet", "opus", "haiku"];
 const advertisedModels = providerModels.map((model) => model.id);
 assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), advertisedModels, "compatibility targets must match advertised models");
+// Fable 5 is not served through subscription plans, so Claude rejects it with a
+// usage-credits 429 that says nothing about this package. It is excluded from
+// the blocking gate and stays selectable for accounts that enable credits.
+const ungatedModels = new Set(["fable"]);
+const mediumOnlyModels = advertisedModels.filter((model) => !effortModels.includes(model));
 const coreCases = [
     { model: "sonnet", effort: "medium" },
     ...effortModels.flatMap((model) => efforts.map((effort) => ({ model, effort }))).filter(({ model, effort }) => model !== "sonnet" || effort !== "medium"),
-    ...advertisedModels.filter((model) => !effortModels.includes(model)).map((model) => ({ model, effort: "medium" })),
+    ...mediumOnlyModels.filter((model) => !ungatedModels.has(model)).map((model) => ({ model, effort: "medium" })),
+];
+const selectableCases = [
+    ...coreCases,
+    ...mediumOnlyModels.filter((model) => ungatedModels.has(model)).map((model) => ({ model, effort: "medium" })),
 ];
 const CASE_TIMEOUT_MS = 4 * 60_000;
 const selectedCase = process.argv[2] === "--case" ? process.argv[3] : undefined;
-if ((process.argv.length > 2 && (!selectedCase || process.argv.length !== 4)) || (selectedCase && !coreCases.some(({ model, effort }) => `${model}:${effort}` === selectedCase))) {
+if ((process.argv.length > 2 && (!selectedCase || process.argv.length !== 4)) || (selectedCase && !selectableCases.some(({ model, effort }) => `${model}:${effort}` === selectedCase))) {
     throw new Error(`Unknown model matrix case: ${process.argv.slice(2).join(" ")}`);
 }
-const selectedCases = selectedCase ? coreCases.filter(({ model, effort }) => `${model}:${effort}` === selectedCase) : coreCases;
+const selectedCases = selectedCase ? selectableCases.filter(({ model, effort }) => `${model}:${effort}` === selectedCase) : coreCases;
 
 async function runCase(cwd, model, effort) {
     const metricsBefore = await metricsEntries();

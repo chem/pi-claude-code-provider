@@ -782,3 +782,67 @@ test("provider cleans private transport state after an early process failure", a
         await Promise.all([fake.dir, markerDirectory].map((directory) => rm(directory, { recursive: true, force: true })));
     }
 });
+const textResponseBody = `
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(init)}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"message_start",message:{id:"msg_hook",model:"claude-sonnet-5",usage:{input_tokens:0,output_tokens:0}}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_start",index:0,content_block:{type:"text",text:""}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",index:0,delta:{type:"text_delta",text:"hook ok"}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_stop",index:0}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"hook ok",usage:{input_tokens:4,output_tokens:2}}) + "\\n");
+  setTimeout(() => {}, 50);
+});`;
+test("provider reports a synthetic response to Pi before streaming content", async () => {
+    const fake = await fakeClaude(textResponseBody);
+    try {
+        const observed = [];
+        const responses = [];
+        const stream = createClaudeStream({
+            executable: fake.executable,
+            version: "2.1.206",
+            subscriptionType: "pro",
+        })(model, context, {
+            reasoning: "medium",
+            onResponse(response, responseModel) {
+                responses.push({ response, modelId: responseModel.id });
+                observed.push("response");
+            },
+        });
+        for await (const event of stream)
+            observed.push(event.type);
+        const result = await stream.result();
+        assert.equal(result.stopReason, "stop", result.errorMessage);
+        assert.equal(responses.length, 1);
+        // No HTTP response exists, so the status is synthetic and headers are empty.
+        assert.deepEqual(responses[0].response, { status: 200, headers: {} });
+        assert.equal(responses[0].modelId, "sonnet");
+        assert.deepEqual(observed, ["response", "start", "text_start", "text_delta", "text_end", "done"]);
+    }
+    finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider fails the request when Pi's response handler rejects", async () => {
+    const fake = await fakeClaude(textResponseBody);
+    try {
+        const stream = createClaudeStream({
+            executable: fake.executable,
+            version: "2.1.206",
+            subscriptionType: "pro",
+        })(model, context, {
+            reasoning: "medium",
+            onResponse() {
+                return Promise.reject(new Error("observer rejected"));
+            },
+        });
+        const result = await stream.result();
+        assert.equal(result.stopReason, "error");
+        assert.match(result.errorMessage ?? "", /after_provider_response handler failed: .*observer rejected/);
+        const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "response_hook");
+        assert.equal(metrics.stopReason, "error");
+    }
+    finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});

@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import { access, rm } from "node:fs/promises";
-import type { Api, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessageEventStream,
+  Context,
+  Model,
+  ProviderResponse,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { buildClaudeEnvironment, claudeLaunch } from "./auth.ts";
 import { providerArgs } from "./claude-args.ts";
@@ -113,6 +120,28 @@ export function createClaudeStream(
         });
       };
 
+      // Claude Code's headless protocol has no HTTP response to report, so a
+      // validated initialization is announced with a synthetic success status
+      // and no headers, matching how Pi's own non-HTTP providers observe one.
+      const announceResponse = (): void => {
+        const observe = options?.onResponse;
+        if (!observe) return;
+        const response: ProviderResponse = { status: 200, headers: {} };
+        let pending: void | Promise<void>;
+        try {
+          pending = observe(response, model);
+        } catch (error) {
+          // Thrown synchronously from the mapper, so the caller's protocol
+          // handler fails the request and terminates the Claude process tree.
+          throw new ClaudeCodeError("response_hook", `Pi after_provider_response handler failed: ${errorText(error)}`);
+        }
+        void Promise.resolve(pending).catch((error: unknown) => {
+          errorCategory ??= "response_hook";
+          mapper?.fail(`Pi after_provider_response handler failed: ${errorText(error)}`);
+          terminateInBackground();
+        });
+      };
+
       const stopForToolUse = (): void => {
         if (toolUse || terminationCause === "caller_abort") return;
         toolUse = true;
@@ -157,6 +186,7 @@ export function createClaudeStream(
           prepared.toolNames,
           stopForToolUse,
           onRateLimitNotice,
+          announceResponse,
         );
 
         // Configuration must fail before a paid budget slot is claimed or a
