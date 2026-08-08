@@ -63,7 +63,7 @@ Provider and web-search requests consume Claude subscription capacity. Optional 
 
 Anthropic documents [`claude -p` / `--print`](https://code.claude.com/docs/en/cli-reference) as its non-interactive CLI interface, explains that [third-party usage draws from subscription limits](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), and documents [subscription authentication and usage credits](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan). This project uses that public interface without claiming Anthropic endorsement.
 
-Rate-limit warnings and reset times appear as Pi notifications when Claude provides them.
+Rate-limit warnings, overage status, and reset times appear as Pi notifications when Claude provides them, including for web-search requests. Utilization is displayed using Claude Code's whole-percent convention.
 
 ## Compatibility limitation
 

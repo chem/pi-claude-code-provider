@@ -203,7 +203,7 @@ test("maps result-only fallback text, served limits, and cache details", async (
             events.push(event.type);
     })();
     init(mapper);
-    mapper.accept({ type: "result", is_error: false, result: "fallback", usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 5, cache_creation: { ephemeral_1h_input_tokens: 1 }, output_tokens_details: { thinking_tokens: 2 } }, modelUsage: { sonnet: { contextWindow: 200000, maxOutputTokens: 64000 } } });
+    mapper.accept({ type: "result", is_error: false, result: "fallback", stop_reason: "max_tokens", usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 5, cache_creation: { ephemeral_1h_input_tokens: 1 }, output_tokens_details: { thinking_tokens: 2 } }, modelUsage: { sonnet: { contextWindow: 200000, maxOutputTokens: 64000 } } });
     assert.equal(mapper.hasSuccessfulResult, true);
     assert.equal(mapper.isTerminal, false);
     mapper.completeResult();
@@ -214,6 +214,7 @@ test("maps result-only fallback text, served limits, and cache details", async (
     assert.equal(output.usage.cacheWrite1h, 1);
     assert.equal(mapper.contextWindow, 200000);
     assert.equal(mapper.maxOutputTokens, 64000);
+    assert.equal(output.stopReason, "length");
     assert.deepEqual(events, ["start", "text_start", "text_delta", "text_end", "done"]);
 });
 test("maps an explicit Claude error result to one terminal error", async () => {
@@ -231,6 +232,17 @@ test("maps an explicit Claude error result to one terminal error", async () => {
     assert.deepEqual(events, ["start", "error"]);
     assert.equal(output.stopReason, "error");
     assert.match(output.errorMessage ?? "", /429.*subscription limit reached/);
+});
+test("keeps assistant and loop diagnostics when the result text is empty", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const mapper = new ClaudeEventMapper(stream, output, new Set(), new Map(), () => { });
+    init(mapper);
+    mapper.accept({ type: "assistant", error: "rate_limit", message: { content: [{ type: "text", text: "You're out of usage credits" }] } });
+    mapper.accept({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "", errors: ["loop detail"] });
+    const result = await stream.result();
+    assert.equal(result.stopReason, "error");
+    assert.match(result.errorMessage ?? "", /429.*You're out of usage credits/);
 });
 test("stages the exact Claude 2.1.212 tool-handoff acknowledgement", async () => {
     const { stream, output, mapper } = readyToolMapper();
@@ -302,7 +314,7 @@ test("emits validated rate-limit notices once and retains rejected diagnostics",
     mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed" } });
     mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 } });
     mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 } });
-    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 } });
+    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000 } });
     assert.deepEqual(notices, [
         { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 },
         { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 },
@@ -325,6 +337,31 @@ test("ignores malformed optional rate-limit fields and notification failures", (
     }));
     assert.match(mapper.rateLimitFailure, /five_hour/);
     assert.doesNotMatch(mapper.rateLimitFailure, /resets at/);
+});
+test("surfaces rejected overage even when the primary window is allowed", () => {
+    const notices = [];
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
+    init(mapper);
+    mapper.accept({
+        type: "rate_limit_event",
+        rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            overageStatus: "rejected",
+            overageResetsAt: 1_800_000_000,
+            overageDisabledReason: "out_of_credits",
+            isUsingOverage: false,
+        },
+    });
+    assert.deepEqual(notices, [{
+        status: "rejected",
+        rateLimitType: "overage",
+        resetsAt: 1_800_000_000_000,
+        overageStatus: "rejected",
+        overageDisabledReason: "out_of_credits",
+        isUsingOverage: false,
+    }]);
+    assert.match(mapper.rateLimitFailure, /overage.*out_of_credits/);
 });
 test("maps redacted thinking into Pi's opaque thinking representation", async () => {
     const stream = createAssistantMessageEventStream();

@@ -60,6 +60,30 @@ process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "
     }
 });
 
+test("web search forwards rate-limit notices and preserves null error diagnostics", async () => {
+    const fake = await fakeSearch(`
+process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");
+process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:{status:"allowed_warning",rateLimitType:"five_hour",utilization:0.876,resetsAt:1800000000}}) + "\\n");
+process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:true,result:null,api_error_status:429,errors:["search loop failed"]}) + "\\n");`);
+    try {
+        const notices = [];
+        const installation = { executable: fake.executable, version: "test", subscriptionType: "pro" };
+        await assert.rejects(
+            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, undefined, (notice) => notices.push(notice)),
+            /429.*search loop failed/,
+        );
+        assert.deepEqual(notices, [{
+            status: "allowed_warning",
+            rateLimitType: "five_hour",
+            utilization: 0.876,
+            resetsAt: 1_800_000_000_000,
+        }]);
+    }
+    finally {
+        await rm(fake.directory, { recursive: true, force: true });
+    }
+});
+
 test("web search preserves process-group cleanup rejection and removes private state", async () => {
     const successful = await fakeSearch(`
 process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");

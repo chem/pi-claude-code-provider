@@ -162,7 +162,16 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
           content: [{ type: "text", text: `Searching the web for: ${params.query}` }],
           details: { status: "searching" },
         });
-        const result = await searchWithClaude(installation, params.query, params.focus, signal);
+        const result = await searchWithClaude(
+          installation,
+          params.query,
+          params.focus,
+          signal,
+          undefined,
+          undefined,
+          undefined,
+          (notice) => activeRateLimitNotify?.(notice),
+        );
         const truncated = truncateHead(result, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
         let text = truncated.content;
         let fullOutputPath: string | undefined;
@@ -210,16 +219,25 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
 }
 
 function formatRateLimitNotice(notice: RateLimitNotice): string {
+  const reset = notice.resetsAt === undefined
+    ? ""
+    : `; resets at ${new Date(notice.resetsAt).toLocaleTimeString()}`;
+  const overageReset = notice.overageResetsAt === undefined
+    ? ""
+    : `; overage resets at ${new Date(notice.overageResetsAt).toLocaleTimeString()}`;
+  const overage = notice.rateLimitType === "overage" || notice.overageStatus === undefined
+    ? ""
+    : `; overage ${notice.overageStatus}${notice.overageDisabledReason ? ` (${notice.overageDisabledReason})` : ""}`;
+  const usingOverage = notice.isUsingOverage ? "; using overage" : "";
   if (notice.status === "rejected") {
-    const reset = notice.resetsAt === undefined
-      ? ""
-      : `; resets at ${new Date(notice.resetsAt).toLocaleTimeString()}`;
-    return `${NOTICE_PREFIX} Claude rate limited (${notice.rateLimitType})${reset}`;
+    return `${NOTICE_PREFIX} Claude rate limited (${notice.rateLimitType})${reset}${overageReset}${overage}${usingOverage}`;
   }
   const usage = notice.utilization === undefined
     ? "usage is approaching the limit"
-    : `${Math.round(notice.utilization * 100)}% used`;
-  return `${NOTICE_PREFIX} Claude rate limit warning: ${usage} (${notice.rateLimitType})`;
+    : `${Math.floor(notice.utilization * 100)}% used`;
+  // Match Claude Code's current whole-percent display while preserving the
+  // fractional utilization in the protocol mapper for future consumers.
+  return `${NOTICE_PREFIX} Claude rate limit warning: ${usage} (${notice.rateLimitType})${reset}${overageReset}${overage}${usingOverage}`;
 }
 
 function registerUnavailableNotice(pi: ExtensionAPI, reason: string): void {

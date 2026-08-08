@@ -47,7 +47,7 @@ else {
   setTimeout(() => {
     const providerMode = process.argv.includes("--system-prompt-file");
     process.stdout.write(JSON.stringify(providerMode ? ${JSON.stringify(providerInit)} : ${JSON.stringify(init)}) + "\\n");
-    for (const rateLimitInfo of ${JSON.stringify(rateLimitEvents)}) if (providerMode) process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:rateLimitInfo}) + "\\n");
+    for (const rateLimitInfo of ${JSON.stringify(rateLimitEvents)}) process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:rateLimitInfo}) + "\\n");
     process.stdout.write(JSON.stringify({type:"result",is_error:false,result:${JSON.stringify(searchResult)}}) + "\\n");
   }, ${searchDelayMs});
 }
@@ -61,6 +61,7 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
         status: "allowed_warning",
         rateLimitType: "five_hour",
         utilization: 0.876,
+        resetsAt: 1_800_000_000,
     });
     const original = {
         executable: process.env.PI_CLAUDE_CODE_PROVIDER_PATH,
@@ -89,7 +90,7 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
         assert.equal((await provider.streamSimple(model, context, { reasoning: "medium" }).result()).stopReason, "stop");
         const warning = notices.find(({ message }) => message.includes("rate limit warning"));
         assert.deepEqual(warning, {
-            message: "[pi-claude-code-provider] Claude rate limit warning: 88% used (five_hour)",
+            message: `[pi-claude-code-provider] Claude rate limit warning: 87% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleTimeString()}`,
             level: "warning",
         });
         await pi.handlers.get("session_shutdown")[0]({}, {});

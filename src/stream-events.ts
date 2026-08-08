@@ -7,12 +7,13 @@ interface StreamEventEnvelope {
   subtype?: string;
   event?: Record<string, unknown>;
   result?: string | null;
+  errors?: unknown;
   usage?: Record<string, unknown>;
   modelUsage?: Record<string, Record<string, unknown>>;
   is_error?: boolean;
   api_error_status?: number | null;
   stop_reason?: string | null;
-  terminal_reason?: string;
+  terminal_reason?: string | null;
   tools?: unknown;
   mcp_servers?: unknown;
   model?: string;
@@ -32,9 +33,14 @@ export interface ClaudeInitializationExpectation {
 export interface RateLimitNotice {
   status: "allowed_warning" | "rejected";
   rateLimitType: string;
-  /** Claude Code reports utilization as a fraction from 0 through 1, not a percentage. */
+  /** Raw Claude Code utilization is a fraction from 0 through 1, not a percentage. */
   utilization?: number;
+  /** Reset values are normalized from raw Claude Code Unix seconds to JavaScript milliseconds. */
   resetsAt?: number;
+  overageStatus?: "allowed_warning" | "rejected";
+  overageResetsAt?: number;
+  overageDisabledReason?: string;
+  isUsingOverage?: boolean;
 }
 
 export type RateLimitNoticeSink = (notice: RateLimitNotice) => void;
@@ -69,6 +75,7 @@ export class ClaudeEventMapper {
   private readonly onToolUse: () => void;
   private readonly onRateLimitNotice: RateLimitNoticeSink;
   private readonly emittedRateLimitNotices = new Set<string>();
+  private assistantDiagnostic: string | undefined;
 
   constructor(
     stream: AssistantMessageEventStream,
@@ -126,8 +133,10 @@ export class ClaudeEventMapper {
       this.acceptResult(record, terminationCause);
     } else if (record.type === "rate_limit_event") {
       this.acceptRateLimit(record.rate_limit_info);
-    } else if (record.type === "assistant" || record.type === "user" || record.type === "system") {
-      // Completed-message echoes and non-init system status records are redundant
+    } else if (record.type === "assistant") {
+      this.acceptAssistant(record);
+    } else if (record.type === "user" || record.type === "system") {
+      // Completed user echoes and non-init system status records are redundant
       // because include-partial-messages supplies the canonical stream events.
     } else {
       throw new ClaudeCodeError("protocol_record", `Unsupported Claude record type: ${String(record.type)}`);
@@ -181,10 +190,7 @@ export class ClaudeEventMapper {
   private acceptMessageDelta(event: Record<string, unknown>): void {
     const delta = object(event.delta, "message_delta.delta");
     if (delta.stop_reason !== null && delta.stop_reason !== undefined) {
-      if (typeof delta.stop_reason !== "string" || !STOP_REASONS.has(delta.stop_reason)) {
-        throw new ClaudeCodeError("protocol_stop", `Unsupported Claude stop reason: ${String(delta.stop_reason)}`);
-      }
-      this.stopReason = delta.stop_reason;
+      this.stopReason = stopReason(delta.stop_reason);
     }
     this.applyUsage(event.usage);
     if (this.stopReason === "tool_use") this.onToolUse();
@@ -299,10 +305,15 @@ export class ClaudeEventMapper {
     this.resultReceived = true;
     this.applyUsage(record.usage);
     this.applyModelUsage(record.modelUsage);
+    if (record.stop_reason !== null && record.stop_reason !== undefined && this.stopReason === undefined) {
+      this.stopReason = stopReason(record.stop_reason);
+    }
     if (record.is_error) {
       if (this.isExpectedToolTermination(record, terminationCause)) return;
-      const status = record.api_error_status ? ` (${record.api_error_status})` : "";
-      this.fail(`Claude Code request failed${status}: ${record.result ?? record.terminal_reason ?? this.rejectedRateLimit ?? "unknown error"}`);
+      const status = typeof record.api_error_status === "number" && Number.isFinite(record.api_error_status)
+        ? ` (${record.api_error_status})`
+        : "";
+      this.fail(`Claude Code request failed${status}: ${resultErrorDetail(record, this.assistantDiagnostic, this.rejectedRateLimit)}`);
       return;
     }
     // Claude result envelopes make success explicit. Do not infer it from an
@@ -356,23 +367,31 @@ export class ClaudeEventMapper {
     this.stream.push({ type: "text_end", contentIndex, content: text, partial: this.output });
   }
 
+  private acceptAssistant(record: StreamEventEnvelope): void {
+    if (this.assistantDiagnostic !== undefined) return;
+    const raw = record as Record<string, unknown>;
+    const error = typeof raw.error === "string" ? raw.error.trim() : "";
+    const message = raw.message && typeof raw.message === "object" && !Array.isArray(raw.message)
+      ? raw.message as Record<string, unknown>
+      : undefined;
+    const content = message?.content;
+    const text = typeof content === "string"
+      ? content.trim()
+      : Array.isArray(content)
+        ? content
+          .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object" && !Array.isArray(block))
+          .filter((block) => block.type === "text" && typeof block.text === "string")
+          .map((block) => (block.text as string).trim())
+          .filter(Boolean)
+          .join(" ")
+        : "";
+    const diagnostic = [error, text].filter(Boolean).join(": ");
+    if (diagnostic) this.assistantDiagnostic = diagnostic;
+  }
+
   private acceptRateLimit(info: unknown): void {
-    if (!info || typeof info !== "object" || Array.isArray(info)) {
-      throw new ClaudeCodeError("protocol_rate_limit", "Claude emitted invalid rate-limit information");
-    }
-    const rate = info as Record<string, unknown>;
-    if (rate.status !== "rejected" && rate.status !== "allowed_warning") return;
-    const rateLimitType = typeof rate.rateLimitType === "string" && rate.rateLimitType.trim()
-      ? rate.rateLimitType.trim()
-      : "unknown";
-    const resetsAt = validTimestamp(rate.resetsAt);
-    const utilization = validUtilization(rate.utilization);
-    const notice: RateLimitNotice = {
-      status: rate.status,
-      rateLimitType,
-      ...(utilization === undefined ? {} : { utilization }),
-      ...(resetsAt === undefined ? {} : { resetsAt }),
-    };
+    const notice = parseRateLimitNotice(info);
+    if (!notice) return;
     const noticeKey = JSON.stringify(notice);
     if (!this.emittedRateLimitNotices.has(noticeKey)) {
       this.emittedRateLimitNotices.add(noticeKey);
@@ -383,8 +402,9 @@ export class ClaudeEventMapper {
       }
     }
     if (notice.status === "rejected") {
-      const reset = resetsAt === undefined ? "" : `; resets at ${new Date(resetsAt).toISOString()}`;
-      this.rejectedRateLimit = `Claude rate limit rejected (${rateLimitType})${reset}`;
+      const reset = notice.resetsAt === undefined ? "" : `; resets at ${new Date(notice.resetsAt).toISOString()}`;
+      const reason = notice.overageDisabledReason === undefined ? "" : `; ${notice.overageDisabledReason}`;
+      this.rejectedRateLimit = `Claude rate limit rejected (${notice.rateLimitType})${reason}${reset}`;
     }
   }
 
@@ -423,12 +443,74 @@ export class ClaudeEventMapper {
 
 function validTimestamp(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
-  return Number.isNaN(new Date(value).getTime()) ? undefined : value;
+  // The raw `claude -p` protocol follows the SDK contract's Unix timestamp
+  // convention (seconds). Keep JavaScript-facing notices in milliseconds.
+  const milliseconds = value * 1000;
+  return !Number.isSafeInteger(milliseconds) || Number.isNaN(new Date(milliseconds).getTime())
+    ? undefined
+    : milliseconds;
 }
 
 function validUtilization(value: unknown): number | undefined {
   // Keep the wire value fractional; convert it to a percentage only when rendering the notice.
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
+}
+
+export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined {
+  if (!info || typeof info !== "object" || Array.isArray(info)) {
+    throw new ClaudeCodeError("protocol_rate_limit", "Claude emitted invalid rate-limit information");
+  }
+  const rate = info as Record<string, unknown>;
+  const primaryStatus = alertStatus(rate.status);
+  const overageStatus = alertStatus(rate.overageStatus);
+  if (!primaryStatus && !overageStatus) return undefined;
+  const status = primaryStatus === "rejected" || overageStatus === "rejected" ? "rejected" : "allowed_warning";
+  const hasPrimaryAlert = primaryStatus !== undefined;
+  const rateLimitType = hasPrimaryAlert
+    ? typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
+    : "overage";
+  const overageReset = validTimestamp(rate.overageResetsAt);
+  const resetsAt = validTimestamp(hasPrimaryAlert ? rate.resetsAt : rate.overageResetsAt);
+  const utilization = validUtilization(rate.utilization);
+  const reason = typeof rate.overageDisabledReason === "string" && rate.overageDisabledReason.trim()
+    ? rate.overageDisabledReason.trim()
+    : undefined;
+  return {
+    status,
+    rateLimitType,
+    ...(hasPrimaryAlert && utilization !== undefined ? { utilization } : {}),
+    ...(resetsAt === undefined ? {} : { resetsAt }),
+    ...(overageStatus === undefined ? {} : { overageStatus }),
+    ...(hasPrimaryAlert && overageReset !== undefined ? { overageResetsAt: overageReset } : {}),
+    ...(reason === undefined ? {} : { overageDisabledReason: reason }),
+    ...(typeof rate.isUsingOverage === "boolean" ? { isUsingOverage: rate.isUsingOverage } : {}),
+  };
+}
+
+function alertStatus(value: unknown): RateLimitNotice["status"] | undefined {
+  return value === "allowed_warning" || value === "rejected" ? value : undefined;
+}
+
+function stopReason(value: unknown): string {
+  if (typeof value !== "string" || !STOP_REASONS.has(value)) {
+    throw new ClaudeCodeError("protocol_stop", `Unsupported Claude stop reason: ${String(value)}`);
+  }
+  return value;
+}
+
+function resultErrorDetail(
+  record: StreamEventEnvelope,
+  assistantDiagnostic: string | undefined,
+  rateLimitFailure: string | undefined,
+): string {
+  const result = typeof record.result === "string" && record.result.trim() ? record.result.trim() : undefined;
+  const errors = Array.isArray(record.errors)
+    ? record.errors.filter((error): error is string => typeof error === "string" && Boolean(error.trim())).join("; ")
+    : "";
+  const terminal = typeof record.terminal_reason === "string" && record.terminal_reason.trim()
+    ? record.terminal_reason.trim()
+    : undefined;
+  return result ?? assistantDiagnostic ?? (errors || undefined) ?? terminal ?? rateLimitFailure ?? "unknown error";
 }
 
 export function validateClaudeInitialization(

@@ -11,7 +11,7 @@ import { recordSearchMetrics } from "./metrics.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
 import { superviseProcess, type ProcessSupervisor } from "./process-utils.ts";
 import { createRuntimeDirectory, recordRuntimeChild } from "./runtime-directories.ts";
-import { validateClaudeInitialization } from "./stream-events.ts";
+import { parseRateLimitNotice, type RateLimitNoticeSink, validateClaudeInitialization } from "./stream-events.ts";
 
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -31,6 +31,7 @@ export async function searchWithClaude(
   timeoutMs = SEARCH_TIMEOUT_MS,
   cleanupDirectory: CleanupDirectory = cleanupDirectoryDefault,
   supervise: typeof superviseProcess = superviseProcess,
+  onRateLimitNotice: RateLimitNoticeSink = () => {},
 ): Promise<string> {
   const startedAt = Date.now();
   const requestBytes = Buffer.byteLength(query) + Buffer.byteLength(focus ?? "");
@@ -131,9 +132,12 @@ export async function searchWithClaude(
       terminateInBackground();
     };
     signal?.addEventListener("abort", abortHandler, { once: true });
-    const currentProtocol = new SearchProtocol((phase) => {
-      metrics.lastPhase = phase;
-    });
+    const currentProtocol = new SearchProtocol(
+      (phase) => {
+        metrics.lastPhase = phase;
+      },
+      onRateLimitNotice,
+    );
     protocol = currentProtocol;
     let stderr = "";
     let protocolError: Error | undefined;
@@ -227,11 +231,14 @@ export async function searchWithClaude(
 
 class SearchProtocol {
   private initialized = false;
-  private resultRecord: { is_error: boolean; result: string } | undefined;
+  private resultRecord: SearchResultRecord | undefined;
+  private rateLimitFailure: string | undefined;
   private readonly onPhase: ((phase: string) => void) | undefined;
+  private readonly onRateLimitNotice: RateLimitNoticeSink;
 
-  constructor(onPhase?: (phase: string) => void) {
+  constructor(onPhase?: (phase: string) => void, onRateLimitNotice: RateLimitNoticeSink = () => {}) {
     this.onPhase = onPhase;
+    this.onRateLimitNotice = onRateLimitNotice;
   }
 
   get isInitialized(): boolean {
@@ -263,9 +270,21 @@ class SearchProtocol {
       if (!isSearchResult(record)) throw new ClaudeCodeError("protocol_result", "Claude web search returned an invalid result envelope");
       this.resultRecord = record;
       this.onPhase?.("result_received");
+    } else if (record.type === "rate_limit_event") {
+      const notice = parseRateLimitNotice(record.rate_limit_info);
+      if (notice) {
+        try {
+          this.onRateLimitNotice(notice);
+        } catch {
+          // UI notifications are advisory and must never fail a search request.
+        }
+        if (notice.status === "rejected") {
+          const reset = notice.resetsAt === undefined ? "" : `; resets at ${new Date(notice.resetsAt).toISOString()}`;
+          this.rateLimitFailure = `Claude rate limit rejected (${notice.rateLimitType})${reset}`;
+        }
+      }
     } else if (
       record.type !== "stream_event" &&
-      record.type !== "rate_limit_event" &&
       record.type !== "assistant" &&
       record.type !== "user" &&
       record.type !== "system"
@@ -277,8 +296,25 @@ class SearchProtocol {
   result(): string {
     if (!this.initialized) throw new ClaudeCodeError("protocol_init", "Claude web search omitted initialization");
     if (!this.resultRecord) throw new ClaudeCodeError("protocol_result", "Claude web search omitted its result");
-    if (this.resultRecord.is_error) throw new Error(this.resultRecord.result || "Claude web search failed");
-    if (!this.resultRecord.result) throw new Error("Claude web search returned an empty result");
+    if (this.resultRecord.is_error) {
+      const result = typeof this.resultRecord.result === "string" && this.resultRecord.result.trim()
+        ? this.resultRecord.result.trim()
+        : undefined;
+      const errors = Array.isArray(this.resultRecord.errors)
+        ? this.resultRecord.errors.filter((error): error is string => typeof error === "string" && Boolean(error.trim())).join("; ")
+        : "";
+      const terminal = typeof this.resultRecord.terminal_reason === "string" && this.resultRecord.terminal_reason.trim()
+        ? this.resultRecord.terminal_reason.trim()
+        : undefined;
+      const status = typeof this.resultRecord.api_error_status === "number" && Number.isFinite(this.resultRecord.api_error_status)
+        ? ` (${this.resultRecord.api_error_status})`
+        : "";
+      const detail = result ?? (errors || terminal || this.rateLimitFailure || "unknown error");
+      throw new Error(`Claude web search failed${status}: ${detail}`);
+    }
+    if (typeof this.resultRecord.result !== "string" || !this.resultRecord.result) {
+      throw new Error("Claude web search returned an empty result");
+    }
     return this.resultRecord.result;
   }
 }
@@ -291,8 +327,19 @@ function searchErrorCategory(error: unknown, aborted: boolean, oversized: boolea
   return "search_failed";
 }
 
-function isSearchResult(value: unknown): value is { is_error: boolean; result: string } {
+interface SearchResultRecord {
+  is_error: boolean;
+  result?: string | null;
+  errors?: unknown;
+  api_error_status?: number | null;
+  terminal_reason?: string | null;
+}
+
+// Raw `claude -p` error result envelopes may omit or null out `result`; keep
+// validation permissive here so the diagnostic fields can explain the failure.
+function isSearchResult(value: unknown): value is SearchResultRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return typeof record.is_error === "boolean" && typeof record.result === "string";
+  return typeof record.is_error === "boolean" &&
+    (record.result === undefined || record.result === null || typeof record.result === "string");
 }
