@@ -35,9 +35,10 @@ export interface RateLimitNotice {
   rateLimitType: string;
   /** Raw Claude Code utilization is a fraction from 0 through 1, not a percentage. */
   utilization?: number;
-  /** Reset values are normalized from raw Claude Code Unix seconds to JavaScript milliseconds. */
+  /** Reset for the reported rateLimitType, normalized from raw Unix seconds to JavaScript milliseconds. */
   resetsAt?: number;
   overageStatus?: "allowed_warning" | "rejected";
+  /** Raw overage reset, retained separately and therefore possibly equal to resetsAt when overage is the subject. */
   overageResetsAt?: number;
   overageDisabledReason?: string;
   isUsingOverage?: boolean;
