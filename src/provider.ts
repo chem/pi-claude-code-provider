@@ -23,7 +23,7 @@ import { ClaudeEventMapper, type ClaudeTerminationCause, type RateLimitNoticeSin
 import type { ClaudeInstallation, LogicalProviderPayload, MutableOutput, RequestMetrics } from "./types.ts";
 
 const MAX_STDERR_BYTES = 64 * 1024;
-const MCP_READY_TIMEOUT_MS = 5_000;
+const DEFAULT_MCP_READY_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 30 * 60_000;
 /** Internal dependency seam for deterministic cleanup-failure tests. */
@@ -198,6 +198,10 @@ export function createClaudeStream(
           timeoutSetting("PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS", DEFAULT_IDLE_TIMEOUT_MS),
           totalTimeoutMs,
         );
+        const readyTimeoutMs = Math.min(
+          timeoutSetting("PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS", DEFAULT_MCP_READY_TIMEOUT_MS),
+          totalTimeoutMs,
+        );
 
         // Pi can cancel before asynchronous request preparation finishes. Do
         // not briefly launch Claude or its MCP child for an already-dead turn;
@@ -284,7 +288,7 @@ export function createClaudeStream(
         });
 
         if (prepared.readyPath) {
-          await waitForReadyOrExit(prepared.readyPath, MCP_READY_TIMEOUT_MS, options?.signal, supervisor.wait());
+          await waitForReadyOrExit(prepared.readyPath, readyTimeoutMs, options?.signal, supervisor.wait());
           metrics.lastPhase = "mcp_ready";
         }
         if (child.exitCode === null && child.signalCode === null && !options?.signal?.aborted) {

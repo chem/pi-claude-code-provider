@@ -44,7 +44,11 @@ test("removes only old runtime directories whose recorded processes are gone", a
   const now = Date.now();
   try {
     const stale = await createRuntimeDirectory("provider_request", { temporaryRoot: root, ownerPid: 301, now: now - 2 * HOUR });
-    const activeOwner = await createRuntimeDirectory("web_search_output", { temporaryRoot: root, ownerPid: 302, now: now - 2 * HOUR });
+    // The web_search_output prefix nests inside the web_search_request prefix,
+    // so this directory is only reclaimed when its kind is resolved by the
+    // longest matching prefix rather than the first one.
+    const staleOutput = await createRuntimeDirectory("web_search_output", { temporaryRoot: root, ownerPid: 306, now: now - 2 * HOUR });
+    const activeOwner = await createRuntimeDirectory("provider_request", { temporaryRoot: root, ownerPid: 302, now: now - 2 * HOUR });
     const activeChild = await createRuntimeDirectory("web_search_request", { temporaryRoot: root, ownerPid: 303, now: now - 2 * HOUR });
     await recordRuntimeChild(activeChild, 304);
     const young = await createRuntimeDirectory("provider_request", { temporaryRoot: root, ownerPid: 305, now });
@@ -54,8 +58,9 @@ test("removes only old runtime directories whose recorded processes are gone", a
       now,
       processAlive: (pid) => pid === 302 || pid === 304,
     });
-    assert.deepEqual(removed, { removed: 1, failures: 0 });
+    assert.deepEqual(removed, { removed: 2, failures: 0 });
     await assert.rejects(access(stale));
+    await assert.rejects(access(staleOutput));
     await Promise.all([activeOwner, activeChild, young].map((directory) => access(directory)));
   } finally {
     await rm(root, { recursive: true, force: true });

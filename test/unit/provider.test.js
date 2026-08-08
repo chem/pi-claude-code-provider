@@ -515,7 +515,7 @@ process.stdin.on("end", () => {
     }
 });
 
-test("provider accepts Claude 2.1.212 tool-handoff acknowledgement after cleanup", { skip: process.platform === "win32" }, async () => {
+test("provider accepts the captured Claude tool-handoff acknowledgement after cleanup", { skip: process.platform === "win32" }, async () => {
     const fake = await fakeClaude(`
 process.on("SIGTERM", () => {
   process.stdout.write(JSON.stringify(${JSON.stringify(toolTerminationResult)}) + "\\n", () => process.exit(143));

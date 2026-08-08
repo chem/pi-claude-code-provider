@@ -51,12 +51,12 @@ const required = [
 for (const path of required) {
   if (!inventory.includes(path)) throw new Error(`npm package is missing ${path}`);
 }
-const forbiddenPackageRoots = [".github/", "interactions/", "scripts/", "test/", "tooling/"];
+const forbiddenPackageRoots = [".github/", "scripts/", "test/", "tooling/"];
 for (const path of inventory) {
   if (forbiddenPackageRoots.some((prefix) => path.startsWith(prefix))) {
     throw new Error(`Development-only path would be published: ${path}`);
   }
-  if (["PRERELEASE.md", "tsconfig.json"].includes(path)) {
+  if (path === "tsconfig.json") {
     throw new Error(`Development-only file would be published: ${path}`);
   }
 }

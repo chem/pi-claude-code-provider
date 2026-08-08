@@ -43,6 +43,12 @@ const documentationErrors = documentationPolicyErrors(
   VERIFIED_VERSIONS,
 );
 if (documentationErrors.length) throw new Error(documentationErrors.join("\n"));
+// Deterministic CI must resolve Pi types from the verified baseline; a stale pin
+// silently validates the package against a contract it no longer targets.
+const workflow = readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8");
+const pinnedPi = `@earendil-works/pi-coding-agent@${VERIFIED_VERSIONS.pi}`;
+if (!workflow.includes(pinnedPi))
+  throw new Error(`.github/workflows/ci.yml must install ${pinnedPi}`);
 const runtimeJavaScript = files.filter(
   (path) => (path.startsWith(join(root, "extensions")) || path.startsWith(join(root, "src"))) && path.endsWith(".js"),
 );

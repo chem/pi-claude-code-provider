@@ -244,7 +244,7 @@ test("keeps assistant and loop diagnostics when the result text is empty", async
     assert.equal(result.stopReason, "error");
     assert.match(result.errorMessage ?? "", /429.*You're out of usage credits/);
 });
-test("stages the exact Claude 2.1.212 tool-handoff acknowledgement", async () => {
+test("stages the exact captured Claude tool-handoff acknowledgement", async () => {
     const { stream, output, mapper } = readyToolMapper();
     const events = [];
     const consume = (async () => {

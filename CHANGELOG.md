@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Recover stale private web-search output directories, which a nested temporary-directory prefix had excluded from the recovery pass.
+- Allow `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` to override the five-second tool-catalog readiness timeout.
 - Support Claude Opus 5 through Claude Code's `opus` alias while retaining the safe 200K Pro context limit.
 - Report a validated Claude initialization to Pi's `after_provider_response` observers before publishing any content.
 - Report streaming partial messages with Pi's `pending` stop reason instead of a premature `stop`.

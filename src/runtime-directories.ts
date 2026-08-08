@@ -119,9 +119,12 @@ export async function cleanupStaleRuntimeDirectories(
 }
 
 function runtimeKind(name: string): RuntimeDirectoryKind | undefined {
-  return (Object.entries(PREFIXES) as Array<[RuntimeDirectoryKind, string]>).find(([, prefix]) =>
-    name.startsWith(prefix)
-  )?.[0];
+  // Prefixes nest: a web_search_output name also starts with the
+  // web_search_request prefix. Longest match keeps each kind distinguishable,
+  // because a misread kind is discarded by the marker comparison in cleanup.
+  return (Object.entries(PREFIXES) as Array<[RuntimeDirectoryKind, string]>)
+    .filter(([, prefix]) => name.startsWith(prefix))
+    .sort(([, left], [, right]) => right.length - left.length)[0]?.[0];
 }
 
 async function readMarker(directory: string): Promise<RuntimeMarker | undefined> {

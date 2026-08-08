@@ -51,7 +51,7 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
     failed = true;
     options.onFailure(error);
     // A timeout or pipe error has already established the primary failure, but
-    // Platform process cleanup must still be observed to avoid an unhandled rejection.
+    // platform process cleanup must still be observed to avoid an unhandled rejection.
     void terminate().catch((terminationError: unknown) => {
       options.onFailure(new Error(`Claude Code process cleanup failed: ${errorMessage(terminationError)}`));
     });
