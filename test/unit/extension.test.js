@@ -107,6 +107,44 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
     }
 });
 
+test("labels a mixed overage rejection as overage", async () => {
+    const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        utilization: 0.77,
+        resetsAt: 1_800_000_000,
+        overageStatus: "rejected",
+        overageResetsAt: 1_800_000_100,
+        overageDisabledReason: "out_of_credits",
+    });
+    const original = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+    process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
+    try {
+        const pi = fakePi();
+        await piClaudeCodeProvider(pi.api);
+        const provider = pi.providers.get("pi-claude-code-provider");
+        const configured = provider.models.find((model) => model.id === "sonnet");
+        const model = {
+            ...configured,
+            provider: "pi-claude-code-provider",
+            api: "pi-claude-code-provider-headless",
+            baseUrl: "pi-claude-code-provider://local",
+        };
+        const notices = [];
+        pi.handlers.get("session_start")[0]({}, { ui: { notify(message, level) { notices.push({ message, level }); } } });
+        const context = { messages: [{ role: "user", content: "hello", timestamp: 1 }], tools: [] };
+        await provider.streamSimple(model, context, { reasoning: "medium" }).result();
+        const rejected = notices.find(({ message }) => message.includes("rate limited"));
+        assert.match(rejected?.message ?? "", /rate limited \(overage\)/);
+        assert.match(rejected?.message ?? "", /overage rejected \(out_of_credits\)/);
+    }
+    finally {
+        if (original === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_PATH = original;
+        await rm(directory, { recursive: true, force: true });
+    }
+});
+
 test("converts fractional weekly utilization to a percentage", async () => {
     const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
         status: "allowed_warning",

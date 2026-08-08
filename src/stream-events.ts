@@ -22,7 +22,7 @@ interface StreamEventEnvelope {
   skills?: unknown;
   plugins?: unknown;
   apiKeySource?: string;
-  rate_limit_info?: Record<string, unknown>;
+  rate_limit_info?: unknown;
 }
 
 export interface ClaudeInitializationExpectation {
@@ -52,7 +52,7 @@ interface IndexedBlock {
   partialJson?: string;
 }
 
-const STOP_REASONS = new Set(["end_turn", "max_tokens", "tool_use", "stop_sequence"]);
+const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
 export type ClaudeTerminationCause = "none" | "tool_handoff" | "caller_abort";
 
@@ -305,9 +305,6 @@ export class ClaudeEventMapper {
     this.resultReceived = true;
     this.applyUsage(record.usage);
     this.applyModelUsage(record.modelUsage);
-    if (record.stop_reason !== null && record.stop_reason !== undefined && this.stopReason === undefined) {
-      this.stopReason = stopReason(record.stop_reason);
-    }
     if (record.is_error) {
       if (this.isExpectedToolTermination(record, terminationCause)) return;
       const status = typeof record.api_error_status === "number" && Number.isFinite(record.api_error_status)
@@ -315,6 +312,9 @@ export class ClaudeEventMapper {
         : "";
       this.fail(`Claude Code request failed${status}: ${resultErrorDetail(record, this.assistantDiagnostic, this.rejectedRateLimit)}`);
       return;
+    }
+    if (record.stop_reason !== null && record.stop_reason !== undefined && this.stopReason === undefined) {
+      this.stopReason = stopReason(record.stop_reason);
     }
     // Claude result envelopes make success explicit. Do not infer it from an
     // absent flag or subtype string, which could hide protocol drift.
@@ -444,8 +444,10 @@ export class ClaudeEventMapper {
 function validTimestamp(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
   // The raw `claude -p` protocol follows the SDK contract's Unix timestamp
-  // convention (seconds). Keep JavaScript-facing notices in milliseconds.
-  const milliseconds = value * 1000;
+  // convention (seconds). Keep JavaScript-facing notices in milliseconds, but
+  // avoid double-converting a plausible epoch-millisecond value from a future
+  // CLI version or intermediary.
+  const milliseconds = value >= EPOCH_MILLISECONDS_THRESHOLD ? value : value * 1000;
   return !Number.isSafeInteger(milliseconds) || Number.isNaN(new Date(milliseconds).getTime())
     ? undefined
     : milliseconds;
@@ -458,7 +460,9 @@ function validUtilization(value: unknown): number | undefined {
 
 export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined {
   if (!info || typeof info !== "object" || Array.isArray(info)) {
-    throw new ClaudeCodeError("protocol_rate_limit", "Claude emitted invalid rate-limit information");
+    // Rate-limit events are advisory. Ignore a malformed payload so it cannot
+    // turn an otherwise valid provider or web-search request into a failure.
+    return undefined;
   }
   const rate = info as Record<string, unknown>;
   const primaryStatus = alertStatus(rate.status);
@@ -466,11 +470,18 @@ export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined
   if (!primaryStatus && !overageStatus) return undefined;
   const status = primaryStatus === "rejected" || overageStatus === "rejected" ? "rejected" : "allowed_warning";
   const hasPrimaryAlert = primaryStatus !== undefined;
+  const rejectedOverage = overageStatus === "rejected" && primaryStatus !== "rejected";
   const rateLimitType = hasPrimaryAlert
-    ? typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
+    ? rejectedOverage
+      ? "overage"
+      : typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
     : "overage";
   const overageReset = validTimestamp(rate.overageResetsAt);
-  const resetsAt = validTimestamp(hasPrimaryAlert ? rate.resetsAt : rate.overageResetsAt);
+  const resetsAt = validTimestamp(rejectedOverage
+    ? rate.overageResetsAt
+    : hasPrimaryAlert
+      ? rate.resetsAt
+      : rate.overageResetsAt);
   const utilization = validUtilization(rate.utilization);
   const reason = typeof rate.overageDisabledReason === "string" && rate.overageDisabledReason.trim()
     ? rate.overageDisabledReason.trim()
@@ -478,7 +489,7 @@ export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined
   return {
     status,
     rateLimitType,
-    ...(hasPrimaryAlert && utilization !== undefined ? { utilization } : {}),
+    ...(hasPrimaryAlert && !rejectedOverage && utilization !== undefined ? { utilization } : {}),
     ...(resetsAt === undefined ? {} : { resetsAt }),
     ...(overageStatus === undefined ? {} : { overageStatus }),
     ...(hasPrimaryAlert && overageReset !== undefined ? { overageResetsAt: overageReset } : {}),
@@ -492,8 +503,11 @@ function alertStatus(value: unknown): RateLimitNotice["status"] | undefined {
 }
 
 function stopReason(value: unknown): string {
-  if (typeof value !== "string" || !STOP_REASONS.has(value)) {
-    throw new ClaudeCodeError("protocol_stop", `Unsupported Claude stop reason: ${String(value)}`);
+  // Claude exposes this as a string rather than a closed enum. Pi only gives
+  // special meaning to max_tokens and tool_use, so preserve future values as
+  // ordinary stops instead of rejecting an otherwise valid response.
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ClaudeCodeError("protocol_stop", `Invalid Claude stop reason: ${String(value)}`);
   }
   return value;
 }

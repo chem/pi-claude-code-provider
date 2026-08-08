@@ -84,6 +84,25 @@ process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:tr
     }
 });
 
+test("ignores malformed advisory rate-limit events", async () => {
+    for (const rateLimitInfo of ["null", "[]", "undefined"]) {
+        const fake = await fakeSearch(`
+process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");
+const rateLimitEvent = {type:"rate_limit_event"};
+if (${JSON.stringify(rateLimitInfo)} === "null") rateLimitEvent.rate_limit_info = null;
+if (${JSON.stringify(rateLimitInfo)} === "[]") rateLimitEvent.rate_limit_info = [];
+process.stdout.write(JSON.stringify(rateLimitEvent) + "\\n");
+process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"sourced result"}) + "\\n");`);
+        try {
+            const installation = { executable: fake.executable, version: "test", subscriptionType: "pro" };
+            assert.equal(await searchWithClaude(installation, "query", undefined, undefined), "sourced result");
+        }
+        finally {
+            await rm(fake.directory, { recursive: true, force: true });
+        }
+    }
+});
+
 test("web search preserves process-group cleanup rejection and removes private state", async () => {
     const successful = await fakeSearch(`
 process.stdout.write(JSON.stringify(${JSON.stringify(searchInit)}) + "\\n");

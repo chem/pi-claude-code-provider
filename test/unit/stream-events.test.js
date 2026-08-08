@@ -322,6 +322,13 @@ test("emits validated rate-limit notices once and retains rejected diagnostics",
     assert.match(mapper.rateLimitFailure, /five_hour/);
     assert.match(mapper.rateLimitFailure, /2027-/);
 });
+test("does not double-convert epoch-millisecond reset timestamps", () => {
+    const notices = [];
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
+    init(mapper);
+    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 } });
+    assert.deepEqual(notices, [{ status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 }]);
+});
 test("ignores malformed optional rate-limit fields and notification failures", () => {
     const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, () => {
         throw new Error("UI unavailable");
@@ -335,6 +342,9 @@ test("ignores malformed optional rate-limit fields and notification failures", (
         type: "rate_limit_event",
         rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: Number.POSITIVE_INFINITY },
     }));
+    assert.doesNotThrow(() => mapper.accept({ type: "rate_limit_event", rate_limit_info: null }));
+    assert.doesNotThrow(() => mapper.accept({ type: "rate_limit_event", rate_limit_info: [] }));
+    assert.doesNotThrow(() => mapper.accept({ type: "rate_limit_event" }));
     assert.match(mapper.rateLimitFailure, /five_hour/);
     assert.doesNotMatch(mapper.rateLimitFailure, /resets at/);
 });
@@ -345,10 +355,12 @@ test("surfaces rejected overage even when the primary window is allowed", () => 
     mapper.accept({
         type: "rate_limit_event",
         rate_limit_info: {
-            status: "allowed",
+            status: "allowed_warning",
             rateLimitType: "five_hour",
+            utilization: 0.77,
+            resetsAt: 1_800_000_000,
             overageStatus: "rejected",
-            overageResetsAt: 1_800_000_000,
+            overageResetsAt: 1_800_000_100,
             overageDisabledReason: "out_of_credits",
             isUsingOverage: false,
         },
@@ -356,7 +368,8 @@ test("surfaces rejected overage even when the primary window is allowed", () => 
     assert.deepEqual(notices, [{
         status: "rejected",
         rateLimitType: "overage",
-        resetsAt: 1_800_000_000_000,
+        resetsAt: 1_800_000_100_000,
+        overageResetsAt: 1_800_000_100_000,
         overageStatus: "rejected",
         overageDisabledReason: "out_of_credits",
         isUsingOverage: false,
@@ -408,7 +421,7 @@ test("rejects unsupported blocks, deltas, unclosed blocks, and events after stop
     stopped.accept({ type: "stream_event", event: { type: "message_stop" } });
     assert.throws(() => stopped.accept({ type: "stream_event", event: { type: "ping" } }), /after message_stop/);
 });
-test("rejects malformed results and unsupported stop reasons", () => {
+test("rejects malformed results and accepts future stop reasons", () => {
     const make = () => {
         const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { });
         init(mapper);
@@ -420,9 +433,33 @@ test("rejects malformed results and unsupported stop reasons", () => {
         () => make().accept({ type: "result", is_error: false, result: { forged: true } }),
         /non-string result field/,
     );
-    assert.throws(() => make().accept({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "future_reason" } } }), /Unsupported Claude stop reason/);
+    for (const stopReason of ["future_reason", "model_context_window_exceeded", "pause_turn", "refusal"]) {
+        assert.doesNotThrow(() => make().accept({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: stopReason } } }));
+    }
     const duplicate = make();
     duplicate.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
     assert.throws(() => duplicate.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } }), /Duplicate content block/);
     assert.throws(() => make().accept({ type: "stream_event", event: { type: "content_block_stop", index: 99 } }), /unknown content block/);
+});
+test("preserves result errors and accepts future result stop reasons", async () => {
+    const successStream = createAssistantMessageEventStream();
+    const successMapper = new ClaudeEventMapper(successStream, createOutput(model), new Set(), new Map(), () => { });
+    init(successMapper);
+    successMapper.accept({ type: "result", is_error: false, result: "declined", stop_reason: "refusal" });
+    successMapper.completeResult();
+    assert.equal((await successStream.result()).stopReason, "stop");
+
+    const errorStream = createAssistantMessageEventStream();
+    const errorMapper = new ClaudeEventMapper(errorStream, createOutput(model), new Set(), new Map(), () => { });
+    init(errorMapper);
+    errorMapper.accept({
+        type: "result",
+        is_error: true,
+        api_error_status: 429,
+        stop_reason: "model_context_window_exceeded",
+        result: "actual API failure",
+    });
+    const error = await errorStream.result();
+    assert.equal(error.stopReason, "error");
+    assert.match(error.errorMessage ?? "", /429.*actual API failure/);
 });

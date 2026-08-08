@@ -271,6 +271,8 @@ class SearchProtocol {
       this.resultRecord = record;
       this.onPhase?.("result_received");
     } else if (record.type === "rate_limit_event") {
+      // Rate-limit events are advisory; malformed information is ignored so
+      // it cannot fail an otherwise valid web-search request.
       const notice = parseRateLimitNotice(record.rate_limit_info);
       if (notice) {
         try {

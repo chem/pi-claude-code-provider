@@ -222,10 +222,10 @@ function formatRateLimitNotice(notice: RateLimitNotice): string {
   const reset = notice.resetsAt === undefined
     ? ""
     : `; resets at ${new Date(notice.resetsAt).toLocaleTimeString()}`;
-  const overageReset = notice.overageResetsAt === undefined
+  const overageReset = notice.rateLimitType === "overage" || notice.overageResetsAt === undefined
     ? ""
     : `; overage resets at ${new Date(notice.overageResetsAt).toLocaleTimeString()}`;
-  const overage = notice.rateLimitType === "overage" || notice.overageStatus === undefined
+  const overage = notice.overageStatus === undefined
     ? ""
     : `; overage ${notice.overageStatus}${notice.overageDisabledReason ? ` (${notice.overageDisabledReason})` : ""}`;
   const usingOverage = notice.isUsingOverage ? "; using overage" : "";
