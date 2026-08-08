@@ -8,18 +8,18 @@ import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { PAID_LAUNCH_BUDGET_ENV } from "../../src/paid-launch-budget.ts";
 import { closeLiveRpcProcess, consumeJsonl, superviseLiveProcess } from "../../scripts/lib/live-process.js";
 import { piCliEntry } from "../../scripts/lib/pi-installation.js";
+import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
 import { spawn } from "node:child_process";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 
 async function fakeClaude(directory) {
   const executable = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
-  const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt", "--system-prompt-file", "--model", "--effort"].join("\n");
   const init = { type: "system", subtype: "init", tools: [], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" };
   await writeFile(executable, `#!/usr/bin/env node
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
-else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify({loggedIn:true,authMethod:"claude.ai",apiProvider:"firstParty",subscriptionType:"pro"}));
-else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(help)});
+else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH)}));
+else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
 else {
   process.stdin.resume();
   process.stdin.on("end", () => {

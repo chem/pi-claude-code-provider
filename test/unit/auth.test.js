@@ -4,19 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, validateClaudeCapabilities } from "../../src/auth.ts";
+import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { validateProcessTerminationCapability, windowsTaskkillExecutable } from "../../src/process-utils.ts";
-const eligible = JSON.stringify({
-    loggedIn: true,
-    authMethod: "claude.ai",
-    apiProvider: "firstParty",
-    email: "private@example.com",
-    orgId: "private",
-    subscriptionType: "pro",
-});
+import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
+
+const bracketedSystemPromptHelp = CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]");
+
 test("normalizes every eligible subscription without returning PII", () => {
     for (const subscriptionType of ["pro", "max", "team", "enterprise"]) {
-        const status = JSON.parse(eligible);
-        status.subscriptionType = subscriptionType.toUpperCase();
+        const status = { ...ELIGIBLE_CLAUDE_AUTH, subscriptionType: subscriptionType.toUpperCase() };
         assert.equal(parseAuthStatus(JSON.stringify(status)), subscriptionType);
     }
 });
@@ -48,22 +44,20 @@ test("builds an allowlisted Claude environment", () => {
     }
 });
 test("requires the Claude Code headless command surface", () => {
-    const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt", "--system-prompt-file", "--model", "--effort"].join("\n");
-    assert.doesNotThrow(() => validateClaudeCapabilities(help));
-    assert.throws(() => validateClaudeCapabilities(help.replace("--effort", "")), /--effort/);
-    assert.throws(() => validateClaudeCapabilities(help.replace("--system-prompt-file", "")), /--system-prompt-file/);
-    assert.throws(() => validateClaudeCapabilities(help.replace("--system-prompt\n", "")), /--system-prompt/);
-    assert.throws(() => validateClaudeCapabilities(help.replace("--permission-mode", "")), /--permission-mode/);
+    assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP));
+    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--effort", "")), /--effort/);
+    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt-file", "")), /--system-prompt-file/);
+    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt\n", "")), /--system-prompt/);
+    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--permission-mode", "")), /--permission-mode/);
 });
 
 test("resolves a directly launchable Claude executable through Windows PATHEXT", { skip: process.platform !== "win32" }, async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-path-"));
     const claude = join(directory, "claude.cjs");
-    const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt[-file]", "--model", "--effort"].join("\n");
     await writeFile(claude, `
-if (process.argv.includes("--version")) process.stdout.write("2.1.207\\n");
-else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(eligible)});
-else process.stdout.write(${JSON.stringify(help)});
+if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
+else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
+else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
 `);
     const original = {
         path: process.env.PATH,
@@ -95,11 +89,10 @@ test("validates the built-in Windows taskkill capability without PATH lookup", {
 test("preflight honors and functionally validates the Claude executable override", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-"));
     const claude = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
-    const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt[-file]", "--model", "--effort"].join("\n");
     await writeFile(claude, `#!/usr/bin/env node
-if (process.argv.includes("--version")) process.stdout.write("2.1.207\\n");
-else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(eligible)});
-else process.stdout.write(${JSON.stringify(help)});
+if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
+else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
+else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
 `, { mode: 0o700 });
     await chmod(claude, 0o700);
     const originalClaude = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
@@ -107,7 +100,7 @@ else process.stdout.write(${JSON.stringify(help)});
     try {
         const installation = await inspectClaudeInstallation();
         assert.equal(installation.executable, await realpath(claude));
-        assert.equal(installation.version, "2.1.207");
+        assert.equal(installation.version, VERIFIED_VERSIONS.claudeCode);
         assert.equal(installation.subscriptionType, "pro");
         await writeFile(claude, "#!/usr/bin/env node\n", { mode: 0o700 });
         await assert.rejects(inspectClaudeInstallation(), /determine the Claude Code version/);

@@ -28,7 +28,7 @@ test("reports verified and candidate platforms accurately", () => {
   assert.equal(platformStatus("linux", "arm64", "6.6-microsoft-standard-WSL2", "Ubuntu").isVerified, false);
   const macos = platformStatus("darwin", "arm64");
   assert.equal(macos.isVerified, false);
-  assert.match(macos.warning, /Apple Silicon.*Tahoe 26\.5.*pending/);
+  assert.match(macos.warning, /Apple Silicon.*deterministic CI passes.*live validation is pending/);
   assert.match(platformStatus("darwin", "x64").warning, /unverified/);
   const windows = platformStatus("win32", "x64");
   assert.equal(windows.isVerified, true);

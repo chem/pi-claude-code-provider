@@ -75,7 +75,7 @@ export function platformStatus(
       current,
       verified: VERIFIED_PLATFORMS,
       isVerified: false,
-      warning: "Apple Silicon macOS is a compatibility candidate; live validation target Tahoe 26.5 is pending",
+      warning: "Apple Silicon macOS is a compatibility candidate; deterministic CI passes, but subscription-consuming live validation is pending",
     };
   }
   return {

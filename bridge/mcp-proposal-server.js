@@ -1,12 +1,5 @@
 #!/usr/bin/env node
-/**
- * Proposal-only MCP bridge.
- *
- * Claude Code may discover Pi's tool schemas through this process, but the
- * bridge deliberately has no executor. Any tools/call request is recorded in
- * the private violation marker and rejected. Keep this file dependency-free:
- * it is launched on every provider turn that exposes tools.
- */
+/** Proposal-only MCP bridge: expose Pi schemas, reject every tools/call, and stay dependency-free. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 

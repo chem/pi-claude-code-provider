@@ -13,7 +13,7 @@ This project was developed using frontier AI models under human guidance. Almost
 - Claude Code, verified with 2.1.226
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 
-WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) on Node.js 24.16.0; subscription-consuming live validation on macOS remains pending. Other platforms continue with a warning and runtime capability checks.
+WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml), while subscription-consuming live validation remains pending. See the [compatibility baseline](DEVELOPING.md#compatibility-baseline) for current versions and details. Other platforms continue with a warning and runtime capability checks.
 
 The provider rejects API-key authentication, alternate Anthropic base URLs, and Bedrock, Vertex, or Foundry routing. If `claude` is not on `PATH`, set `PI_CLAUDE_CODE_PROVIDER_PATH` to its executable path.
 
@@ -43,11 +43,11 @@ To select one directly:
 
 The same canonical reference works from the command line with `pi --model pi-claude-code-provider/sonnet`.
 
-Pi thinking levels map to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values. Unsupported levels are hidden. Opus uses a safe 200K context window on Pro and 1M on Max, Team, and Enterprise. Claude Code may report the 1M-capable Opus variant on Pro even when usage credits are disabled; the provider keeps Pi's configured limit at 200K because it cannot determine credit availability.
+Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability.
 
-The `fable` alias is offered but not validated, because Fable 5 is not served through subscription plans and Claude rejects it without usage credits. Nothing about it is provider-specific, so it should behave like the other aliases wherever your plan or credits allow it.
+The `fable` alias is offered but unvalidated: Fable 5 requires usage credits and is not served through subscription plans. It otherwise follows the standard alias path wherever the plan or credits allow it.
 
-**A note about model self-identification:** Asking Claude “what model are you?” is not a reliable way to verify the served model. Pi's coding-tool prompt and schemas can cause Claude to confidently name an older Sonnet version even when Claude Code served Opus. That answer is generated text, not routing metadata; use the assistant message's `responseModel` field in Pi's JSON output when you need the concrete served model. Pi's status line shows the requested provider alias.
+**Model identity:** self-identification is generated text, not routing metadata, and Pi's coding-tool prompt and schemas can make Claude name an older Sonnet even when Claude Code served Opus. Use the assistant message's `responseModel` field in Pi's JSON output for the served model; Pi's status line shows the requested alias.
 
 After installation or an upstream update, run:
 
@@ -69,7 +69,7 @@ Rate-limit warnings, overage status, and reset times appear as Pi notifications 
 
 ## Compatibility limitation
 
-Claude Code's public headless protocol does not accept arbitrary historical assistant and tool-result messages. The provider therefore sends Pi's complete current history as an append-stable semantic transcript on every request. Branching, compaction, reloads, and provider handoff remain Pi-authoritative, but the transport is not wire-equivalent to Anthropic's Messages API and consumes additional context. Claude controls prompt-cache keys and retention.
+Claude Code's public headless protocol cannot accept arbitrary historical assistant and tool-result messages, so the provider sends Pi's complete current history as an append-stable semantic transcript on every request. Pi remains authoritative for branching, compaction, reloads, and provider handoff; the transport is not wire-equivalent to Anthropic's Messages API, consumes additional context, and leaves prompt-cache keys and retention to Claude.
 
 ## Configuration
 
@@ -85,7 +85,7 @@ Metrics exclude prompts, messages, queries, output, credentials, stderr, and tem
 
 ## Security and troubleshooting
 
-Pi packages run with the user's permissions. Review the source before installation and treat model-visible context like any other Claude Code prompt. Main requests suppress unmanaged user and project Claude customizations and local tools, validate the initialized capability inventory, and remove private request state before reporting success. Claude Code administrator-managed settings, hooks, and MCP policy are an organization-trusted boundary and can take effect before that validation. Abrupt host termination can still leave state behind. See [DESIGN.md](DESIGN.md) for the security model and [SECURITY.md](SECURITY.md) for vulnerability reporting.
+Pi packages run with the user's permissions; review the source before installation and treat model-visible context like any other Claude Code prompt. Main requests suppress unmanaged user and project customizations and local tools, validate capabilities, and remove private request state before success. Administrator-managed Claude Code settings, hooks, and MCP policy are organization-trusted and can take effect before validation; abrupt host termination can still leave state behind. See [DESIGN.md](DESIGN.md) for the security model and [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 - **Provider missing:** run the doctor, correct the reported problem, then run `/reload`.
 - **Authentication rejected:** run `claude auth status` and log in with an eligible first-party subscription.

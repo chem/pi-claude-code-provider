@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { finished } from "node:stream/promises";
 import type { ClaudeInstallation, SearchMetrics } from "./types.ts";
@@ -10,7 +10,7 @@ import { JsonlParser } from "./jsonl.ts";
 import { recordSearchMetrics } from "./metrics.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
 import { superviseProcess, type ProcessSupervisor } from "./process-utils.ts";
-import { createRuntimeDirectory, recordRuntimeChild } from "./runtime-directories.ts";
+import { createRuntimeDirectory, recordRuntimeChild, removeRuntimeDirectory } from "./runtime-directories.ts";
 import { parseRateLimitNotice, type RateLimitNoticeSink, validateClaudeInitialization } from "./stream-events.ts";
 
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
@@ -19,17 +19,13 @@ const SEARCH_TIMEOUT_MS = 180_000;
 /** Internal dependency seam for deterministic cleanup-failure tests. */
 type CleanupDirectory = (directory: string) => Promise<void>;
 
-const cleanupDirectoryDefault: CleanupDirectory = async (directory) => {
-  await rm(directory, { recursive: true, force: true });
-};
-
 export async function searchWithClaude(
   installation: ClaudeInstallation,
   query: string,
   focus: string | undefined,
   signal: AbortSignal | undefined,
   timeoutMs = SEARCH_TIMEOUT_MS,
-  cleanupDirectory: CleanupDirectory = cleanupDirectoryDefault,
+  cleanupDirectory: CleanupDirectory = removeRuntimeDirectory,
   supervise: typeof superviseProcess = superviseProcess,
   onRateLimitNotice: RateLimitNoticeSink = () => {},
 ): Promise<string> {
@@ -202,7 +198,7 @@ export async function searchWithClaude(
       ? "aborted"
       : error === terminationFailure
         ? "process_cleanup"
-        : searchErrorCategory(error, false, oversized);
+        : searchErrorCategory(error, oversized);
     primaryFailure = signal?.aborted ? "Web search was cancelled" : errorText(error);
     try {
       await terminateCurrent();
@@ -321,8 +317,7 @@ class SearchProtocol {
   }
 }
 
-function searchErrorCategory(error: unknown, aborted: boolean, oversized: boolean): string {
-  if (aborted) return "aborted";
+function searchErrorCategory(error: unknown, oversized: boolean): string {
   if (oversized) return "response_too_large";
   if (error instanceof ClaudeCodeError) return error.code;
   if (error && typeof error === "object" && "code" in error && typeof error.code === "string") return error.code;

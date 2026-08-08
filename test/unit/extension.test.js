@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import initializePiClaudeCodeProvider from "../../extensions/pi-claude-code-provider.ts";
+import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
+import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
 
 const piClaudeCodeProvider = (pi) => initializePiClaudeCodeProvider(pi);
 
@@ -32,17 +34,16 @@ function fakePi(initialTools = []) {
     };
 }
 
-async function createFakeClaude(searchResult = "ok", version = "2.1.209", searchDelayMs = 0, rateLimitInfo) {
+async function createFakeClaude(searchResult = "ok", { searchDelayMs = 0, rateLimitInfo } = {}) {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-extension-"));
     const executable = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
     const rateLimitEvents = Array.isArray(rateLimitInfo) ? rateLimitInfo : rateLimitInfo ? [rateLimitInfo] : [];
-    const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt", "--system-prompt-file", "--model", "--effort"].join("\n");
     const init = { type: "system", subtype: "init", tools: ["WebFetch", "WebSearch"], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" };
     const providerInit = { ...init, tools: [] };
     await writeFile(executable, `#!/usr/bin/env node
-if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${version}\n`)});
-else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify({loggedIn:true,authMethod:"claude.ai",apiProvider:"firstParty",subscriptionType:"pro"}));
-else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(help)});
+if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
+else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH)}));
+else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
 else {
   setTimeout(() => {
     const providerMode = process.argv.includes("--system-prompt-file");
@@ -57,12 +58,12 @@ else {
 }
 
 test("routes rate-limit warnings to the active Pi UI without requiring one", async () => {
-    const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
+    const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: {
         status: "allowed_warning",
         rateLimitType: "five_hour",
         utilization: 0.876,
         resetsAt: 1_800_000_000,
-    });
+    } });
     const original = {
         executable: process.env.PI_CLAUDE_CODE_PROVIDER_PATH,
         metrics: process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG,
@@ -108,7 +109,7 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
 });
 
 test("labels a mixed overage rejection as overage", async () => {
-    const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
+    const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: {
         status: "allowed_warning",
         rateLimitType: "five_hour",
         utilization: 0.77,
@@ -116,7 +117,7 @@ test("labels a mixed overage rejection as overage", async () => {
         overageStatus: "rejected",
         overageResetsAt: 1_800_000_100,
         overageDisabledReason: "out_of_credits",
-    });
+    } });
     const original = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
     process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
     try {
@@ -146,11 +147,11 @@ test("labels a mixed overage rejection as overage", async () => {
 });
 
 test("converts fractional weekly utilization to a percentage", async () => {
-    const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
+    const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: {
         status: "allowed_warning",
         rateLimitType: "seven_day",
         utilization: 0.861,
-    });
+    } });
     const original = {
         executable: process.env.PI_CLAUDE_CODE_PROVIDER_PATH,
         metrics: process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG,
@@ -260,7 +261,7 @@ test("truncated web-search output is retained only for the session", async () =>
 });
 
 test("web-search output finishing after shutdown is not retained", async () => {
-    const { directory, executable } = await createFakeClaude("x".repeat(60 * 1024), "2.1.214", 50);
+    const { directory, executable } = await createFakeClaude("x".repeat(60 * 1024), { searchDelayMs: 50 });
     const original = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
     process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
     const outputDirectories = async () => (await readdir(tmpdir(), { withFileTypes: true }))

@@ -15,6 +15,22 @@ const model = {
     contextWindow: 1_000_000,
     maxTokens: 64_000,
 };
+
+function initRecord(tools = [], mcpServers = []) {
+    return {
+        type: "system",
+        subtype: "init",
+        tools,
+        mcp_servers: mcpServers,
+        model: "claude-sonnet-5",
+        permissionMode: "dontAsk",
+        slash_commands: [],
+        skills: [],
+        plugins: [],
+        apiKeySource: "none",
+    };
+}
+
 test("maps text, thinking, tool arguments, usage, and tool termination", async () => {
     const stream = createAssistantMessageEventStream();
     const output = createOutput(model);
@@ -28,18 +44,7 @@ test("maps text, thinking, tool arguments, usage, and tool termination", async (
         for await (const event of stream)
             events.push(event.type);
     })();
-    mapper.accept({
-        type: "system",
-        subtype: "init",
-        tools: ["mcp__pi__calculate"],
-        mcp_servers: [{ name: "pi", status: "connected" }],
-        model: "claude-sonnet-5",
-        permissionMode: "dontAsk",
-        slash_commands: [],
-        skills: [],
-        plugins: [],
-        apiKeySource: "none",
-    });
+    mapper.accept(initRecord(["mcp__pi__calculate"], [{ name: "pi", status: "connected" }]));
     mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5", usage: {} } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "plan" } } });
@@ -94,18 +99,7 @@ test("preserves mixed content and multiple tool calls by Pi content index", asyn
         for await (const event of stream)
             events.push({ type: event.type, contentIndex: event.contentIndex });
     })();
-    mapper.accept({
-        type: "system",
-        subtype: "init",
-        tools: ["mcp__pi__read", "mcp__pi__search"],
-        mcp_servers: [{ name: "pi", status: "connected" }],
-        model: "claude-sonnet-5",
-        permissionMode: "dontAsk",
-        slash_commands: [],
-        skills: [],
-        plugins: [],
-        apiKeySource: "none",
-    });
+    mapper.accept(initRecord(["mcp__pi__read", "mcp__pi__search"], [{ name: "pi", status: "connected" }]));
     mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_multi", model: "claude-sonnet-5", usage: {} } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Checking both sources." } } });
@@ -141,22 +135,13 @@ test("preserves mixed content and multiple tool calls by Pi content index", asyn
     );
     assert.equal(events.filter((event) => event.type === "done").length, 1);
 });
-test("fails closed on unexpected tools and malformed tool arguments", () => {
+test("rejects unexpected initialization tools", () => {
     const stream = createAssistantMessageEventStream();
     const mapper = new ClaudeEventMapper(stream, createOutput(model), new Set(), new Map(), () => { });
-    assert.throws(() => mapper.accept({
-        type: "system",
-        subtype: "init",
-        tools: ["Bash"],
-        mcp_servers: [],
-        permissionMode: "dontAsk",
-        slash_commands: [],
-        skills: [],
-        plugins: [],
-    }), /unexpected tool/);
+    assert.throws(() => mapper.accept(initRecord(["Bash"])), /unexpected tool/);
 });
 function init(mapper) {
-    mapper.accept({ type: "system", subtype: "init", tools: [], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" });
+    mapper.accept(initRecord());
 }
 function exactToolTerminationResult(overrides = {}) {
     return {
@@ -174,7 +159,7 @@ function readyToolMapper(stopReason = "tool_use") {
     const stream = createAssistantMessageEventStream();
     const output = createOutput(model);
     const mapper = new ClaudeEventMapper(stream, output, new Set(["mcp__pi__read"]), new Map([["mcp__pi__read", "read"]]), () => { });
-    mapper.accept({ type: "system", subtype: "init", tools: ["mcp__pi__read"], mcp_servers: [{ name: "pi", status: "connected" }], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" });
+    mapper.accept(initRecord(["mcp__pi__read"], [{ name: "pi", status: "connected" }]));
     mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_tool_ack", model: "claude-sonnet-5", usage: {} } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_ack", name: "mcp__pi__read", input: {} } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"path":"package.json"}' } } });
@@ -302,7 +287,7 @@ test("does not reinterpret a tool acknowledgement after caller abort", async () 
 test("rejects a tool acknowledgement while arguments remain incomplete", () => {
     const stream = createAssistantMessageEventStream();
     const mapper = new ClaudeEventMapper(stream, createOutput(model), new Set(["mcp__pi__read"]), new Map([["mcp__pi__read", "read"]]), () => { });
-    mapper.accept({ type: "system", subtype: "init", tools: ["mcp__pi__read"], mcp_servers: [{ name: "pi", status: "connected" }], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" });
+    mapper.accept(initRecord(["mcp__pi__read"], [{ name: "pi", status: "connected" }]));
     mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_open", model: "claude-sonnet-5", usage: {} } } });
     mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_open", name: "mcp__pi__read", input: {} } } });
     assert.throws(() => mapper.accept(exactToolTerminationResult(), "tool_handoff"), /unclosed content blocks/);
@@ -529,7 +514,7 @@ test("does not announce a response when initialization is rejected", () => {
     const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(["mcp__pi__calculate"]), new Map(), () => { }, () => { }, () => {
         announcements += 1;
     });
-    assert.throws(() => mapper.accept({ type: "system", subtype: "init", tools: [], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" }));
+    assert.throws(() => mapper.accept(initRecord()));
     assert.equal(announcements, 0);
 });
 test("surfaces a throwing response announcement to the protocol caller", () => {

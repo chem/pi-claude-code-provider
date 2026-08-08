@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, rm } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import type {
   Api,
   AssistantMessageEventStream,
@@ -18,7 +18,7 @@ import { recordRequestMetrics } from "./metrics.ts";
 import { createOutput } from "./output.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
 import { superviseProcess, terminateProcessGroup, type ProcessSupervisor } from "./process-utils.ts";
-import { recordRuntimeChild } from "./runtime-directories.ts";
+import { recordRuntimeChild, removeRuntimeDirectory } from "./runtime-directories.ts";
 import { ClaudeEventMapper, type ClaudeTerminationCause, type RateLimitNoticeSink } from "./stream-events.ts";
 import type { ClaudeInstallation, LogicalProviderPayload, MutableOutput, RequestMetrics } from "./types.ts";
 
@@ -29,16 +29,12 @@ const DEFAULT_TOTAL_TIMEOUT_MS = 30 * 60_000;
 /** Internal dependency seam for deterministic cleanup-failure tests. */
 type CleanupDirectory = (directory: string) => Promise<void>;
 
-const cleanupDirectoryDefault: CleanupDirectory = async (directory) => {
-  await rm(directory, { recursive: true, force: true });
-};
-
 /** Internal dependency seam for deterministic abort-timing tests. */
 type ClaimLaunch = () => Promise<void>;
 
 export function createClaudeStream(
   installation: ClaudeInstallation,
-  cleanupDirectory: CleanupDirectory = cleanupDirectoryDefault,
+  cleanupDirectory: CleanupDirectory = removeRuntimeDirectory,
   onRateLimitNotice?: RateLimitNoticeSink,
   claimLaunch: ClaimLaunch = claimPaidTestLaunch,
 ) {

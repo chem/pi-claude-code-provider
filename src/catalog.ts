@@ -12,58 +12,31 @@ const EFFORT_LEVELS = {
   max: "max",
 } as const;
 
+function providerModel(
+  id: string,
+  name: string,
+  contextWindow: number,
+  maxTokens: number,
+): ProviderModelConfig {
+  return {
+    id,
+    name,
+    reasoning: true,
+    thinkingLevelMap: EFFORT_LEVELS,
+    input: ["text", "image"],
+    cost: ZERO_COST,
+    contextWindow,
+    maxTokens,
+  };
+}
+
 export function providerModelsForSubscription(subscriptionType: ClaudeSubscriptionType): ProviderModelConfig[] {
   const opusContextWindow = subscriptionType === "pro" ? 200_000 : 1_000_000;
   return [
-    {
-      id: "default",
-      name: "Claude Code Default",
-      reasoning: true,
-      thinkingLevelMap: EFFORT_LEVELS,
-      input: ["text", "image"],
-      cost: ZERO_COST,
-      contextWindow: 1_000_000,
-      maxTokens: 64_000,
-    },
-    {
-      id: "sonnet",
-      name: "Claude Code Sonnet",
-      reasoning: true,
-      thinkingLevelMap: EFFORT_LEVELS,
-      input: ["text", "image"],
-      cost: ZERO_COST,
-      contextWindow: 1_000_000,
-      maxTokens: 64_000,
-    },
-    {
-      id: "fable",
-      name: "Claude Code Fable",
-      reasoning: true,
-      thinkingLevelMap: EFFORT_LEVELS,
-      input: ["text", "image"],
-      cost: ZERO_COST,
-      contextWindow: 1_000_000,
-      maxTokens: 64_000,
-    },
-    {
-      id: "opus",
-      name: "Claude Code Opus",
-      reasoning: true,
-      thinkingLevelMap: EFFORT_LEVELS,
-      input: ["text", "image"],
-      cost: ZERO_COST,
-      contextWindow: opusContextWindow,
-      maxTokens: 64_000,
-    },
-    {
-      id: "haiku",
-      name: "Claude Code Haiku",
-      reasoning: true,
-      thinkingLevelMap: EFFORT_LEVELS,
-      input: ["text", "image"],
-      cost: ZERO_COST,
-      contextWindow: 200_000,
-      maxTokens: 32_000,
-    },
+    providerModel("default", "Claude Code Default", 1_000_000, 64_000),
+    providerModel("sonnet", "Claude Code Sonnet", 1_000_000, 64_000),
+    providerModel("fable", "Claude Code Fable", 1_000_000, 64_000),
+    providerModel("opus", "Claude Code Opus", opusContextWindow, 64_000),
+    providerModel("haiku", "Claude Code Haiku", 200_000, 32_000),
   ];
 }

@@ -43,6 +43,10 @@ export interface RuntimeCleanupResult {
   failures: number;
 }
 
+export async function removeRuntimeDirectory(directory: string): Promise<void> {
+  await rm(directory, { recursive: true, force: true });
+}
+
 export async function createRuntimeDirectory(
   kind: RuntimeDirectoryKind,
   options: CreateRuntimeDirectoryOptions = {},
