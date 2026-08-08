@@ -32,6 +32,7 @@ export interface ClaudeInitializationExpectation {
 export interface RateLimitNotice {
   status: "allowed_warning" | "rejected";
   rateLimitType: string;
+  /** Claude Code reports utilization as a fraction from 0 through 1, not a percentage. */
   utilization?: number;
   resetsAt?: number;
 }
@@ -426,7 +427,8 @@ function validTimestamp(value: unknown): number | undefined {
 }
 
 function validUtilization(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : undefined;
+  // Keep the wire value fractional; convert it to a percentage only when rendering the notice.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
 }
 
 export function validateClaudeInitialization(

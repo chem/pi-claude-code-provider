@@ -218,7 +218,7 @@ function formatRateLimitNotice(notice: RateLimitNotice): string {
   }
   const usage = notice.utilization === undefined
     ? "usage is approaching the limit"
-    : `${Math.round(notice.utilization)}% used`;
+    : `${Math.round(notice.utilization * 100)}% used`;
   return `${NOTICE_PREFIX} Claude rate limit warning: ${usage} (${notice.rateLimitType})`;
 }
 

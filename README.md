@@ -23,10 +23,10 @@ The provider rejects API-key authentication, alternate Anthropic base URLs, and 
 pi install npm:pi-claude-code-provider
 ```
 
-To install a tag or commit from GitHub:
+To install directly from GitHub's default branch:
 
 ```bash
-pi install git:github.com/chem/pi-claude-code-provider@REF
+pi install git:github.com/chem/pi-claude-code-provider
 ```
 
 Add `-l` for a project-local installation. Pi loads project packages only after the project is trusted; use `pi config` to enable or disable the extension.

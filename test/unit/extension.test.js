@@ -35,6 +35,7 @@ function fakePi(initialTools = []) {
 async function createFakeClaude(searchResult = "ok", version = "2.1.209", searchDelayMs = 0, rateLimitInfo) {
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-extension-"));
     const executable = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
+    const rateLimitEvents = Array.isArray(rateLimitInfo) ? rateLimitInfo : rateLimitInfo ? [rateLimitInfo] : [];
     const help = ["--print", "--setting-sources", "--settings", "--disable-slash-commands", "--permission-mode", "--no-chrome", "--prompt-suggestions", "--output-format", "--input-format", "--include-partial-messages", "--verbose", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", "--tools", "--allowedTools", "--system-prompt", "--system-prompt-file", "--model", "--effort"].join("\n");
     const init = { type: "system", subtype: "init", tools: ["WebFetch", "WebSearch"], mcp_servers: [], model: "claude-sonnet-5", permissionMode: "dontAsk", slash_commands: [], skills: [], plugins: [], apiKeySource: "none" };
     const providerInit = { ...init, tools: [] };
@@ -46,7 +47,7 @@ else {
   setTimeout(() => {
     const providerMode = process.argv.includes("--system-prompt-file");
     process.stdout.write(JSON.stringify(providerMode ? ${JSON.stringify(providerInit)} : ${JSON.stringify(init)}) + "\\n");
-    if (providerMode && ${JSON.stringify(rateLimitInfo ?? null)}) process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:${JSON.stringify(rateLimitInfo ?? null)}}) + "\\n");
+    for (const rateLimitInfo of ${JSON.stringify(rateLimitEvents)}) if (providerMode) process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:rateLimitInfo}) + "\\n");
     process.stdout.write(JSON.stringify({type:"result",is_error:false,result:${JSON.stringify(searchResult)}}) + "\\n");
   }, ${searchDelayMs});
 }
@@ -59,7 +60,7 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
     const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
         status: "allowed_warning",
         rateLimitType: "five_hour",
-        utilization: 87.6,
+        utilization: 0.876,
     });
     const original = {
         executable: process.env.PI_CLAUDE_CODE_PROVIDER_PATH,
@@ -95,6 +96,50 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
         const records = (await readFile(metricsPath, "utf8")).trim().split("\n").map(JSON.parse);
         assert.equal(records.length, 2);
         assert.equal(records.every((record) => record.requestedModel === "sonnet"), true);
+    }
+    finally {
+        if (original.executable === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_PATH = original.executable;
+        if (original.metrics === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG = original.metrics;
+        await rm(directory, { recursive: true, force: true });
+    }
+});
+
+test("converts fractional weekly utilization to a percentage", async () => {
+    const { directory, executable } = await createFakeClaude("ok", "2.1.214", 0, {
+        status: "allowed_warning",
+        rateLimitType: "seven_day",
+        utilization: 0.861,
+    });
+    const original = {
+        executable: process.env.PI_CLAUDE_CODE_PROVIDER_PATH,
+        metrics: process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG,
+    };
+    const metricsPath = join(directory, "metrics.jsonl");
+    process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
+    process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG = metricsPath;
+    try {
+        const pi = fakePi();
+        await piClaudeCodeProvider(pi.api);
+        const provider = pi.providers.get("pi-claude-code-provider");
+        assert.ok(provider);
+        const configured = provider.models.find((model) => model.id === "sonnet");
+        const model = {
+            ...configured,
+            provider: "pi-claude-code-provider",
+            api: "pi-claude-code-provider-headless",
+            baseUrl: "pi-claude-code-provider://local",
+        };
+        const context = { messages: [{ role: "user", content: "hello", timestamp: 1 }], tools: [] };
+        const notices = [];
+        pi.handlers.get("session_start")[0]({}, { ui: { notify(message, level) { notices.push({ message, level }); } } });
+        assert.equal((await provider.streamSimple(model, context, { reasoning: "medium" }).result()).stopReason, "stop");
+        assert.deepEqual(notices.find(({ message }) => message.includes("rate limit warning")), {
+            message: "[pi-claude-code-provider] Claude rate limit warning: 86% used (seven_day)",
+            level: "warning",
+        });
+        await pi.handlers.get("session_shutdown")[0]({}, {});
     }
     finally {
         if (original.executable === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;

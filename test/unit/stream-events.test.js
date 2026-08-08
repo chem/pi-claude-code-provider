@@ -300,11 +300,11 @@ test("emits validated rate-limit notices once and retains rejected diagnostics",
     const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
     init(mapper);
     mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed" } });
-    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 87.6 } });
-    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 87.6 } });
+    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 } });
+    mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 } });
     mapper.accept({ type: "rate_limit_event", rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 } });
     assert.deepEqual(notices, [
-        { status: "allowed_warning", rateLimitType: "five_hour", utilization: 87.6 },
+        { status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.876 },
         { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000_000 },
     ]);
     assert.match(mapper.rateLimitFailure, /five_hour/);
@@ -317,7 +317,7 @@ test("ignores malformed optional rate-limit fields and notification failures", (
     init(mapper);
     assert.doesNotThrow(() => mapper.accept({
         type: "rate_limit_event",
-        rate_limit_info: { status: "allowed_warning", rateLimitType: {}, utilization: 101, resetsAt: "later" },
+        rate_limit_info: { status: "allowed_warning", rateLimitType: {}, utilization: 1.01, resetsAt: "later" },
     }));
     assert.doesNotThrow(() => mapper.accept({
         type: "rate_limit_event",
