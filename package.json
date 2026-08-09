@@ -1,6 +1,6 @@
 {
   "name": "pi-claude-code-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Use a Claude Code subscription as a model provider in Pi through the approved non-interactive mode and without Anthropic's Agents SDK.",
   "author": "chem <sineverbisnon@gmail.com>",
