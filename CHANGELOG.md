@@ -2,16 +2,20 @@
 
 ## [Unreleased]
 
-- Recover stale private web-search output directories, which a nested temporary-directory prefix had excluded from the recovery pass.
-- Allow `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` to override the five-second tool-catalog readiness timeout.
-- Support Claude Opus 5 through Claude Code's `opus` alias while retaining the safe 200K Pro context limit.
-- Report a validated Claude initialization to Pi's `after_provider_response` observers before publishing any content.
-- Await asynchronous `after_provider_response` observers before mapping or publishing Claude response events.
-- Report streaming partial messages with Pi's `pending` stop reason instead of a premature `stop`.
-- Document that `pi auth check` cannot see extension-registered providers.
-- Clarify that Claude Code administrator-managed policy is an organization-trusted boundary, not a suppressible user customization.
-- Verify against Pi 0.84.1 and Claude Code 2.1.226.
-- Exclude Fable 5 from the paid validation gate because it is not served through subscription plans, and document that the `fable` alias is offered untested.
+### Added
+
+- Add `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` to override the five-second MCP tool-catalog readiness timeout.
+
+### Changed
+
+- Verify the existing `opus` alias resolves to Claude Opus 5, retain its safe 200K Pro context limit, and update the verified baseline to Pi 0.84.1 and Claude Code 2.1.226.
+- Improve provider and web-search rate-limit notifications with whole-percent utilization, reset times, and overage status.
+- Align with Pi's provider lifecycle: stream partial responses as `pending` and invoke and await `after_provider_response` observers before publishing content.
+
+### Fixed
+
+- Improve web-search cancellation and cleanup: do not launch Claude for a pre-cancelled request, and recover stale private output left by abrupt exits.
+- Tolerate newer Claude Code result, stop-reason, and advisory rate-limit envelopes while preserving useful error diagnostics.
 
 ## [0.1.0] - 2026-07-19
 
