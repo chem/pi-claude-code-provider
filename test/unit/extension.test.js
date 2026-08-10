@@ -110,15 +110,17 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
     }
 });
 
-test("labels a mixed overage rejection as overage", async () => {
+test("does not report a disabled overage as a rate limit", async () => {
+    // The steady state on a subscription without usage credits: the plan window
+    // is healthy and overage is administratively unavailable on every event.
     const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: {
-        status: "allowed_warning",
+        status: "allowed",
         rateLimitType: "five_hour",
-        utilization: 0.77,
+        utilization: 0.11,
         resetsAt: 1_800_000_000,
         overageStatus: "rejected",
-        overageResetsAt: 1_800_000_100,
-        overageDisabledReason: "out_of_credits",
+        overageDisabledReason: "org_level_disabled",
+        isUsingOverage: false,
     } });
     const original = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
     process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
@@ -136,10 +138,55 @@ test("labels a mixed overage rejection as overage", async () => {
         const notices = [];
         pi.handlers.get("session_start")[0]({}, { ui: { notify(message, level) { notices.push({ message, level }); } } });
         const context = { messages: [{ role: "user", content: "hello", timestamp: 1 }], tools: [] };
+        assert.equal((await provider.streamSimple(model, context, { reasoning: "medium" }).result()).stopReason, "stop");
+        assert.deepEqual(notices.filter(({ message }) => message.includes("rate limit")), []);
+    }
+    finally {
+        if (original === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_PATH = original;
+        await rm(directory, { recursive: true, force: true });
+    }
+});
+
+test("reports a repeated rate-limit warning once per session", async () => {
+    const warning = {
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        utilization: 0.77,
+        resetsAt: 1_800_000_000,
+    };
+    // Claude repeats the notice within one process and across the fresh process
+    // this transport spawns for every tool round-trip.
+    const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: [warning, warning] });
+    const original = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+    process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
+    try {
+        const pi = fakePi();
+        await piClaudeCodeProvider(pi.api);
+        const provider = pi.providers.get("pi-claude-code-provider");
+        const configured = provider.models.find((model) => model.id === "sonnet");
+        const model = {
+            ...configured,
+            provider: "pi-claude-code-provider",
+            api: "pi-claude-code-provider-headless",
+            baseUrl: "pi-claude-code-provider://local",
+        };
+        const notices = [];
+        pi.handlers.get("session_start")[0]({}, { ui: { notify(message, level) { notices.push({ message, level }); } } });
+        const context = { messages: [{ role: "user", content: "hello", timestamp: 1 }], tools: [] };
         await provider.streamSimple(model, context, { reasoning: "medium" }).result();
-        const rejected = notices.find(({ message }) => message.includes("rate limited"));
-        assert.match(rejected?.message ?? "", /rate limited \(overage\)/);
-        assert.match(rejected?.message ?? "", /overage rejected \(out_of_credits\)/);
+        await provider.streamSimple(model, context, { reasoning: "medium" }).result();
+        assert.deepEqual(notices.filter(({ message }) => message.includes("rate limit")), [{
+            message: `[pi-claude-code-provider] Claude rate limit warning: 77% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleTimeString()}`,
+            level: "warning",
+        }]);
+
+        // A new session starts from a clean slate.
+        await pi.handlers.get("session_shutdown")[0]({}, {});
+        const later = [];
+        pi.handlers.get("session_start")[0]({}, { ui: { notify(message, level) { later.push({ message, level }); } } });
+        await provider.streamSimple(model, context, { reasoning: "medium" }).result();
+        assert.equal(later.filter(({ message }) => message.includes("rate limit")).length, 1);
     }
     finally {
         if (original === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;

@@ -19,6 +19,7 @@ import type { RateLimitNotice } from "../src/stream-events.ts";
 const PROVIDER = "pi-claude-code-provider";
 const SEARCH_TOOL = "pi_claude_code_provider_web_search";
 const NOTICE_PREFIX = "[pi-claude-code-provider]";
+const MAX_TRACKED_RATE_LIMIT_NOTICES = 64;
 
 export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<void> {
   const runtimeCleanup = await cleanupStaleRuntimeDirectories();
@@ -94,6 +95,11 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
   let searchRegistered = false;
   let sessionClosing = true;
   let activeRateLimitNotify: ((notice: RateLimitNotice) => void) | undefined;
+  // The provider spawns a Claude process per tool round-trip, so per-request
+  // dedupe cannot suppress a notice Claude repeats across a single Pi turn.
+  // Track emitted notices for the whole session instead; both the provider and
+  // the web-search tool report through this one sink.
+  const emittedRateLimitNotices = new Set<string>();
   const retainedSearchDirectories = new Set<string>();
   const pendingSearchRetentions = new Set<Promise<{ directory: string; path: string } | undefined>>();
 
@@ -136,7 +142,19 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
 
   pi.on("session_start", (_event, ctx) => {
     sessionClosing = false;
-    activeRateLimitNotify = (notice) => ctx.ui.notify(formatRateLimitNotice(notice), "warning");
+    emittedRateLimitNotices.clear();
+    activeRateLimitNotify = (notice) => {
+      const key = JSON.stringify(notice);
+      if (emittedRateLimitNotices.has(key)) return;
+      // Utilization changes as a session progresses, so bound the retained keys
+      // rather than letting one long session accumulate them without limit.
+      if (emittedRateLimitNotices.size >= MAX_TRACKED_RATE_LIMIT_NOTICES) {
+        const [oldest] = emittedRateLimitNotices;
+        if (oldest !== undefined) emittedRateLimitNotices.delete(oldest);
+      }
+      emittedRateLimitNotices.add(key);
+      ctx.ui.notify(formatRateLimitNotice(notice), "warning");
+    };
     if (currentPlatform.warning) ctx.ui.notify(`${NOTICE_PREFIX} ${currentPlatform.warning}`, "warning");
     if (searchRegistered) return;
     if (pi.getAllTools().some((tool) => tool.name === SEARCH_TOOL)) {
@@ -194,6 +212,7 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
   pi.on("session_shutdown", async () => {
     sessionClosing = true;
     activeRateLimitNotify = undefined;
+    emittedRateLimitNotices.clear();
     try {
       await Promise.allSettled([...pendingSearchRetentions]);
       while (retainedSearchDirectories.size > 0) {
@@ -222,7 +241,9 @@ function formatRateLimitNotice(notice: RateLimitNotice): string {
   const reset = notice.resetsAt === undefined
     ? ""
     : `; resets at ${new Date(notice.resetsAt).toLocaleTimeString()}`;
-  const overageReset = notice.rateLimitType === "overage" || notice.overageResetsAt === undefined
+  // An overage-typed notice reports the overage reset as its primary reset, so
+  // the mapper never supplies a separate overage reset in that case.
+  const overageReset = notice.overageResetsAt === undefined
     ? ""
     : `; overage resets at ${new Date(notice.overageResetsAt).toLocaleTimeString()}`;
   const overage = notice.overageStatus === undefined

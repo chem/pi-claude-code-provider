@@ -233,6 +233,35 @@ process.stdin.on("end", () => {
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
+test("provider keeps the exit diagnostic when overage is administratively disabled", async () => {
+    // An advisory rate-limit event must never replace the real reason a Claude
+    // process died, and must not mislabel the failure as a rate limit.
+    const rateLimitInfo = {
+        status: "allowed",
+        rateLimitType: "five_hour",
+        utilization: 0.11,
+        resetsAt: 1_800_000_000,
+        overageStatus: "rejected",
+        overageDisabledReason: "org_level_disabled",
+    };
+    const fake = await fakeClaude(`
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(init)}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"rate_limit_event",rate_limit_info:${JSON.stringify(rateLimitInfo)}}) + "\\n", () => process.exit(9));
+});`);
+    try {
+        const result = await createClaudeStream({ executable: fake.executable, version: "test", subscriptionType: "pro" })(model, context, { reasoning: "medium" }).result();
+        assert.equal(result.stopReason, "error");
+        assert.match(result.errorMessage ?? "", /exited before a terminal event \(code 9/);
+        assert.doesNotMatch(result.errorMessage ?? "", /rate limit/);
+        const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "process_exit" && entry.exitCode === 9);
+        assert.equal(metrics.lastPhase, "process_exited");
+    }
+    finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
 test("provider rejects a process that hangs after a successful result", async () => {
     const fake = await fakeClaude(`
 process.stdin.resume();

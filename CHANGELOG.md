@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Report a rate limit only when one constrains the request. A rejected overage no longer overrides a healthy plan window, so a subscription with usage credits disabled at the account level no longer warns on every request, and the reported window name and utilization are preserved.
+- Report each distinct rate-limit notice once per session rather than once per Claude process, which this transport starts for every tool round-trip.
+
 ## [0.1.1] - 2026-08-08
 
 ### Added

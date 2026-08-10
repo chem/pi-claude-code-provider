@@ -333,7 +333,32 @@ test("ignores malformed optional rate-limit fields and notification failures", (
     assert.match(mapper.rateLimitFailure, /five_hour/);
     assert.doesNotMatch(mapper.rateLimitFailure, /resets at/);
 });
-test("surfaces rejected overage even when the primary window is allowed", () => {
+test("ignores a rejected overage while the plan window is healthy", () => {
+    const notices = [];
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
+    init(mapper);
+    // A subscription without usage credits reports this on every event.
+    mapper.accept({
+        type: "rate_limit_event",
+        rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            utilization: 0.11,
+            resetsAt: 1_800_000_000,
+            overageStatus: "rejected",
+            overageDisabledReason: "org_level_disabled",
+            isUsingOverage: false,
+        },
+    });
+    // The same steady state with no primary status field at all.
+    mapper.accept({
+        type: "rate_limit_event",
+        rate_limit_info: { overageStatus: "rejected", overageDisabledReason: "org_level_disabled" },
+    });
+    assert.deepEqual(notices, []);
+    assert.equal(mapper.rateLimitFailure, undefined);
+});
+test("keeps the plan window and utilization when overage is merely disabled", () => {
     const notices = [];
     const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
     init(mapper);
@@ -345,19 +370,68 @@ test("surfaces rejected overage even when the primary window is allowed", () => 
             utilization: 0.77,
             resetsAt: 1_800_000_000,
             overageStatus: "rejected",
+            overageDisabledReason: "org_level_disabled",
+            isUsingOverage: false,
+        },
+    });
+    assert.deepEqual(notices, [{
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        utilization: 0.77,
+        resetsAt: 1_800_000_000_000,
+    }]);
+    assert.equal(mapper.rateLimitFailure, undefined);
+});
+test("retains overage context when the plan window is exhausted", () => {
+    const notices = [];
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
+    init(mapper);
+    mapper.accept({
+        type: "rate_limit_event",
+        rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "five_hour",
+            utilization: 1,
+            resetsAt: 1_800_000_000,
+            overageStatus: "rejected",
             overageResetsAt: 1_800_000_100,
             overageDisabledReason: "out_of_credits",
-            isUsingOverage: false,
+        },
+    });
+    assert.deepEqual(notices, [{
+        status: "rejected",
+        rateLimitType: "five_hour",
+        utilization: 1,
+        resetsAt: 1_800_000_000_000,
+        overageStatus: "rejected",
+        overageResetsAt: 1_800_000_100_000,
+        overageDisabledReason: "out_of_credits",
+    }]);
+    assert.match(mapper.rateLimitFailure, /five_hour.*out_of_credits/);
+});
+test("escalates a rejected overage while the account is drawing on overage", () => {
+    const notices = [];
+    const mapper = new ClaudeEventMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { }, (notice) => notices.push(notice));
+    init(mapper);
+    mapper.accept({
+        type: "rate_limit_event",
+        rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            utilization: 0.9,
+            overageStatus: "rejected",
+            overageResetsAt: 1_800_000_100,
+            overageDisabledReason: "out_of_credits",
+            isUsingOverage: true,
         },
     });
     assert.deepEqual(notices, [{
         status: "rejected",
         rateLimitType: "overage",
         resetsAt: 1_800_000_100_000,
-        overageResetsAt: 1_800_000_100_000,
         overageStatus: "rejected",
         overageDisabledReason: "out_of_credits",
-        isUsingOverage: false,
+        isUsingOverage: true,
     }]);
     assert.match(mapper.rateLimitFailure, /overage.*out_of_credits/);
 });

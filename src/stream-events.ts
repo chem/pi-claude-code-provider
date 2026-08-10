@@ -498,21 +498,23 @@ export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined
   const rate = info as Record<string, unknown>;
   const primaryStatus = alertStatus(rate.status);
   const overageStatus = alertStatus(rate.overageStatus);
-  if (!primaryStatus && !overageStatus) return undefined;
-  const status = primaryStatus === "rejected" || overageStatus === "rejected" ? "rejected" : "allowed_warning";
+  const usingOverage = rate.isUsingOverage === true;
+  // Overage is subordinate to the plan window. A disabled or exhausted overage
+  // pool only constrains a request when the plan window is already exhausted or
+  // the account is actually drawing on overage; `org_level_disabled` is the
+  // permanent steady state on a subscription without usage credits and is sent
+  // on every event, so it must never be reported as a rate limit on its own.
+  const overageBlocking = overageStatus === "rejected" && (primaryStatus === "rejected" || usingOverage);
+  if (!primaryStatus && !overageBlocking) return undefined;
+  const status = primaryStatus === "rejected" || overageBlocking ? "rejected" : "allowed_warning";
   const hasPrimaryAlert = primaryStatus !== undefined;
-  const rejectedOverage = overageStatus === "rejected" && primaryStatus !== "rejected";
+  // Overage context is noise unless it explains the current constraint.
+  const overageRelevant = overageStatus !== undefined && (primaryStatus === "rejected" || usingOverage);
   const rateLimitType = hasPrimaryAlert
-    ? rejectedOverage
-      ? "overage"
-      : typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
+    ? typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
     : "overage";
   const overageReset = validTimestamp(rate.overageResetsAt);
-  const resetsAt = validTimestamp(rejectedOverage
-    ? rate.overageResetsAt
-    : hasPrimaryAlert
-      ? rate.resetsAt
-      : rate.overageResetsAt);
+  const resetsAt = validTimestamp(hasPrimaryAlert ? rate.resetsAt : rate.overageResetsAt);
   const utilization = validUtilization(rate.utilization);
   const reason = typeof rate.overageDisabledReason === "string" && rate.overageDisabledReason.trim()
     ? rate.overageDisabledReason.trim()
@@ -520,12 +522,12 @@ export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined
   return {
     status,
     rateLimitType,
-    ...(hasPrimaryAlert && !rejectedOverage && utilization !== undefined ? { utilization } : {}),
+    ...(hasPrimaryAlert && utilization !== undefined ? { utilization } : {}),
     ...(resetsAt === undefined ? {} : { resetsAt }),
-    ...(overageStatus === undefined ? {} : { overageStatus }),
-    ...(hasPrimaryAlert && overageReset !== undefined ? { overageResetsAt: overageReset } : {}),
-    ...(reason === undefined ? {} : { overageDisabledReason: reason }),
-    ...(typeof rate.isUsingOverage === "boolean" ? { isUsingOverage: rate.isUsingOverage } : {}),
+    ...(overageRelevant ? { overageStatus } : {}),
+    ...(overageRelevant && hasPrimaryAlert && overageReset !== undefined ? { overageResetsAt: overageReset } : {}),
+    ...(overageRelevant && reason !== undefined ? { overageDisabledReason: reason } : {}),
+    ...(usingOverage ? { isUsingOverage: true } : {}),
   };
 }
 
