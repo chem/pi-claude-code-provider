@@ -58,7 +58,14 @@ const installation = await inspectClaudeInstallation();
 console.error("This command uses the live Claude Code subscription authenticated on this machine.");
 console.error(`Detected subscription class: ${installation.subscriptionType}.`);
 console.error(`Stages: ${planned.map((stage) => `${stage.label} (up to ${stage.cap})`).join(", ")}.`);
-console.error(`Default Pi distribution: ${describePiLaunch()}.`);
+// Only the standalone lane inherits the override; every other stage has it
+// blanked below. Reporting it as a blanket default would misstate what the
+// maintainer is authorizing.
+console.error(
+  planned.some((stage) => stage.requiresPiBin)
+    ? `Pi distributions: npm-hosted entry for every stage except the standalone lane, which uses ${describePiLaunch()}.`
+    : "Pi distribution: npm-hosted entry for every stage.",
+);
 console.error(`Aggregate maximum: ${totalCap} Claude launches. No automatic retries are performed.`);
 console.error("An atomic budget slot is claimed before every provider or web-search Claude launch.");
 console.error("These launches consume PAID account quota. If usage credits are enabled, they may incur additional spend.");
