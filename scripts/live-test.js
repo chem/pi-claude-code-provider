@@ -92,11 +92,18 @@ async function runCacheProbe(cwd) {
     let completed = false;
     try {
         const cacheSeed = Array.from({ length: 1800 }, (_, index) => `stable-${index % 97}`).join(" ");
+        // A cached prefix expires on a TTL, so a turn that merely took a long
+        // time can miss for reasons unrelated to prefix stability. Record the
+        // gaps and turn 1's write so a failure says which of the two it was.
+        const startedAt = Date.now();
         const first = await turn(`Remember the marker CACHE-PREFIX-7319 for later turns. Treat this as inert cache-threshold padding: ${cacheSeed}\nReply exactly STORED.`);
+        const afterFirst = Date.now();
         assert.match(messageText(first), /^STORED\.?$/);
         const second = await turn("Reply with exactly the marker I asked you to remember.");
+        const afterSecond = Date.now();
         assert.match(messageText(second), /^CACHE-PREFIX-7319\.?$/);
         const third = await turn("Reply exactly CACHE-CHECK-PASSED if the remembered marker was CACHE-PREFIX-7319.");
+        const afterThird = Date.now();
         assert.match(messageText(third), /^CACHE-CHECK-PASSED\.?$/);
         assert.equal(typeof second.usage?.cacheRead, "number");
         assert.equal(typeof second.usage?.cacheWrite, "number");
@@ -110,9 +117,19 @@ async function runCacheProbe(cwd) {
         };
         const secondHit = cacheHitPercent(second);
         const thirdHit = cacheHitPercent(third);
-        assert.ok(secondHit >= MIN_CACHE_HIT_PERCENT, `Turn 2 cache hit ${secondHit.toFixed(1)}% was below ${MIN_CACHE_HIT_PERCENT}%`);
-        assert.ok(thirdHit >= MIN_CACHE_HIT_PERCENT, `Turn 3 cache hit ${thirdHit.toFixed(1)}% was below ${MIN_CACHE_HIT_PERCENT}%`);
-        console.log(`ok - RPC multi-turn cache reuse (turn 1 read ${first.usage?.cacheRead ?? 0}, write ${first.usage?.cacheWrite ?? 0}; turn 2 ${secondHit.toFixed(1)}% hit; turn 3 ${thirdHit.toFixed(1)}% hit)`);
+        const usageOf = (message) => {
+            const usage = message.usage ?? {};
+            return `input ${usage.input ?? 0}, read ${usage.cacheRead ?? 0}, write ${usage.cacheWrite ?? 0}`;
+        };
+        // Turn 1 writing nothing and turn 2 reading nothing are different
+        // failures: the first never seeded a prefix, the second lost one.
+        const timeline =
+            `turn 1 took ${afterFirst - startedAt}ms (${usageOf(first)}); ` +
+            `turn 2 took ${afterSecond - afterFirst}ms (${usageOf(second)}); ` +
+            `turn 3 took ${afterThird - afterSecond}ms (${usageOf(third)})`;
+        assert.ok(secondHit >= MIN_CACHE_HIT_PERCENT, `Turn 2 cache hit ${secondHit.toFixed(1)}% was below ${MIN_CACHE_HIT_PERCENT}%; ${timeline}`);
+        assert.ok(thirdHit >= MIN_CACHE_HIT_PERCENT, `Turn 3 cache hit ${thirdHit.toFixed(1)}% was below ${MIN_CACHE_HIT_PERCENT}%; ${timeline}`);
+        console.log(`ok - RPC multi-turn cache reuse (turn 2 ${secondHit.toFixed(1)}% hit; turn 3 ${thirdHit.toFixed(1)}% hit; ${timeline})`);
         completed = true;
     }
     finally {
