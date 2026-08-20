@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { PAID_LAUNCH_BUDGET_ENV } from "../src/paid-launch-budget.ts";
+import { PI_BIN_ENV, describePiLaunch, piBinOverride } from "./lib/pi-installation.js";
 import {
   PAID_CONFIRMATION,
   PAID_CONFIRMATION_ENV,
@@ -16,6 +17,16 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 
 const stages = {
   smoke: { label: "smoke", cap: 1, script: "live-test.js", args: [] },
+  // Pi ships as an npm package and as a compiled standalone binary, and the
+  // proposal bridge is spawned differently on each. Both lanes are required.
+  bridge: { label: "npm bridge", cap: 1, script: "live-test.js", args: ["--bridge"] },
+  "bridge-standalone": {
+    label: "standalone bridge",
+    cap: 1,
+    script: "live-test.js",
+    args: ["--bridge"],
+    requiresPiBin: true,
+  },
   full: { label: "full live", cap: 28, script: "live-test.js", args: ["--full"] },
   "post-tools": { label: "post-tool live", cap: 6, script: "live-test.js", args: ["--post-tools"] },
   cache: { label: "cache", cap: 3, script: "live-test.js", args: ["--cache"] },
@@ -27,19 +38,27 @@ const stages = {
 };
 
 const selected = process.argv[2];
-const releaseOrder = ["full", "cache", "matrix"];
+const releaseOrder = ["full", "cache", "bridge", "bridge-standalone", "matrix"];
 const selectedStages = selected === "release" ? releaseOrder : [selected];
 if (!selected || selectedStages.some((name) => !(name in stages))) {
   throw new Error(`Usage: node scripts/paid-test-runner.js <${[...Object.keys(stages), "release"].join("|")}>`);
 }
 
 const planned = selectedStages.map((name) => stages[name]);
+const missingPiBin = planned.filter((stage) => stage.requiresPiBin && !piBinOverride());
+if (missingPiBin.length) {
+  throw new Error(
+    `The ${missingPiBin.map((stage) => stage.label).join(" and ")} stage runs against a standalone Pi, so ` +
+    `${PI_BIN_ENV} must point at an extracted tar.gz pi executable (for example ${PI_BIN_ENV}=~/pi-0.84.2/pi).`,
+  );
+}
 const totalCap = planned.reduce((total, stage) => total + stage.cap, 0);
 const installation = await inspectClaudeInstallation();
 
 console.error("This command uses the live Claude Code subscription authenticated on this machine.");
 console.error(`Detected subscription class: ${installation.subscriptionType}.`);
 console.error(`Stages: ${planned.map((stage) => `${stage.label} (up to ${stage.cap})`).join(", ")}.`);
+console.error(`Default Pi distribution: ${describePiLaunch()}.`);
 console.error(`Aggregate maximum: ${totalCap} Claude launches. No automatic retries are performed.`);
 console.error("An atomic budget slot is claimed before every provider or web-search Claude launch.");
 console.error("These launches consume PAID account quota. If usage credits are enabled, they may incur additional spend.");
@@ -72,6 +91,9 @@ try {
     const before = await metricCount(metricsLog);
     await run(stage.script, stage.args, {
       ...process.env,
+      // Lanes are explicit: an ambient override must not silently redirect the
+      // npm lane, and the standalone lane must not fall back to the npm entry.
+      ...(stage.requiresPiBin ? {} : { [PI_BIN_ENV]: "" }),
       [PAID_LAUNCH_BUDGET_ENV.child]: "1",
       [PAID_LAUNCH_BUDGET_ENV.stageDirectory]: stageBudgetDirectory,
       [PAID_LAUNCH_BUDGET_ENV.stageCap]: String(stage.cap),

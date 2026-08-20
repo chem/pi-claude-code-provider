@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Launch the tool-proposal MCP bridge under the runtime hosting Pi instead of assuming `process.execPath` is Node. On Pi's standalone tar.gz build that path is a compiled Bun binary, which ignored the bridge argument and started its own entry point, so the bridge never became ready and no tool proposal ever reached Pi. The bridge is now launched with `BUN_BE_BUN=1` on that build, which needs no separate Node installation. This applies to every standalone target Pi publishes: macOS arm64/x64, Linux x64/arm64, and Windows x64/arm64.
+- Pin the bridge to a neutral `bunfig.toml` under a standalone Pi. Pi compiles its binaries with `--no-compile-autoload-bunfig`, but that is a property of Pi's own entry point and does not survive `BUN_BE_BUN`, so a `bunfig.toml` in the bridge's working directory could otherwise preload code into it.
+
+### Added
+
+- `/pi-claude-code-provider-doctor` now completes a real `initialize` plus `tools/list` handshake against the bridge and reports the resolved runtime and launch command. Version and path checks alone pass on an install whose bridge can never start.
+- Record the host runtime and bridge handshake result in the diagnostic report.
+- Add `npm run test:paid:bridge` and `npm run test:paid:bridge-standalone`, one tool-bearing live turn per Pi distribution, both included in `test:paid:release`. `PI_CLAUDE_CODE_PROVIDER_PI_BIN` selects the Pi executable the live scripts launch.
+
+### Changed
+
+- Include the date in rate-limit reset times. A `seven_day` window can reset almost a week out, so reporting only a wall-clock time read as "today" and understated the wait by days.
+- Name the resolved bridge command and carry Claude Code's stderr in the MCP readiness failures, which previously pointed only at `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` and so sent people to the wrong knob. In print mode Claude reports a failed MCP server only after the prompt is written, which this wait precedes, so its stderr is the sole first-hand evidence available at timeout.
+- `npm run check` now reports by name when the `pi` on `PATH` is the compiled standalone build, which resolves no packages and cannot host development.
+
 ## [0.1.2] - 2026-08-09
 
 ### Fixed

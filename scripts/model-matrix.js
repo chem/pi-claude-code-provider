@@ -7,7 +7,7 @@ import { EXPECTED_MODEL_RESOLUTIONS } from "../src/compatibility.ts";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
 import { consumeJsonl, superviseLiveProcess } from "./lib/live-process.js";
-import { piCliEntry } from "./lib/pi-installation.js";
+import { piLaunch } from "./lib/pi-installation.js";
 import { servedContextWindowMatches } from "./lib/model-matrix-policy.js";
 
 if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
@@ -15,7 +15,6 @@ if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
 }
 
 const packageRoot = process.cwd();
-const piEntry = piCliEntry();
 const installation = await inspectClaudeInstallation();
 const providerModels = providerModelsForSubscription(installation.subscriptionType);
 const efforts = ["low", "medium", "high", "xhigh", "max"];
@@ -46,10 +45,11 @@ const selectedCases = selectedCase ? selectableCases.filter(({ model, effort }) 
 async function runCase(cwd, model, effort) {
     const metricsBefore = await metricsEntries();
     const runtimeBefore = await runtimeDirectories();
-    const child = spawn(process.execPath, [piEntry,
+    const launch = piLaunch([
         "--no-session", "-e", packageRoot, "--provider", "pi-claude-code-provider", "--model", `${model}:${effort}`,
         "--no-tools", "--mode", "json", "Reply exactly OK.",
-    ], {
+    ]);
+    const child = spawn(launch.command, launch.args, {
         cwd,
         detached: process.platform !== "win32",
         windowsHide: process.platform === "win32",

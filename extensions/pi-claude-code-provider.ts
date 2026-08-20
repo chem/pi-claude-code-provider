@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
+import { bridgeCommand } from "../src/claude-args.ts";
 import { VERIFIED_VERSIONS, platformStatus, versionStatus } from "../src/compatibility.ts";
 import { writeDiagnosticReport } from "../src/diagnostics.ts";
 import { errorText, normalizeClaudeOverflow } from "../src/errors.ts";
-import { formatDoctorSummary } from "../src/doctor.ts";
+import { formatDoctorSummary, probeBridge } from "../src/doctor.ts";
 import { flushMetricsLog, getLastRequestMetrics, getLastSearchMetrics, getMetricsLogError } from "../src/metrics.ts";
 import { createClaudeStream } from "../src/provider.ts";
 import { cleanupStaleRuntimeDirectories, createRuntimeDirectory } from "../src/runtime-directories.ts";
@@ -34,6 +35,13 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
         }
         const currentPlatform = platformStatus();
         const piStatus = versionStatus("Pi", VERSION, VERIFIED_VERSIONS.pi);
+        // Prove the bridge actually runs. Everything else the doctor reports is
+        // satisfied by an install whose proposal server can never start.
+        const bridgeProbe = await probeBridge().catch((error: unknown) => ({
+          ok: false,
+          command: bridgeCommand(),
+          detail: errorText(error),
+        }));
         if (command === "report") {
           let current: Awaited<ReturnType<typeof inspectClaudeInstallation>> | undefined;
           let preflightError: unknown;
@@ -55,6 +63,7 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
             searchMetrics: getLastSearchMetrics(),
             metricsLogError: getMetricsLogError(),
             runtimeCleanup,
+            bridgeProbe,
           });
           ctx.ui.notify(
             `Claude Code diagnostic report written to ${path}${preflightError ? "; preflight failed, so installation details may be incomplete" : ""}`,
@@ -74,8 +83,9 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
             metrics: getLastRequestMetrics(),
             metricsLogError: getMetricsLogError(),
             runtimeCleanup,
+            bridgeProbe,
           }),
-          claudeStatus.isVerified && piStatus.isVerified && currentPlatform.isVerified ? "info" : "warning",
+          bridgeProbe.ok && claudeStatus.isVerified && piStatus.isVerified && currentPlatform.isVerified ? "info" : "warning",
         );
       } catch (error) {
         ctx.ui.notify(errorText(error), "error");
@@ -237,15 +247,23 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
   });
 }
 
+/**
+ * Claude reports an absolute reset instant, and windows run as long as seven
+ * days, so a bare wall-clock time is ambiguous rather than merely terse.
+ */
+function formatResetInstant(resetsAt: number): string {
+  return new Date(resetsAt).toLocaleString();
+}
+
 function formatRateLimitNotice(notice: RateLimitNotice): string {
   const reset = notice.resetsAt === undefined
     ? ""
-    : `; resets at ${new Date(notice.resetsAt).toLocaleTimeString()}`;
+    : `; resets at ${formatResetInstant(notice.resetsAt)}`;
   // An overage-typed notice reports the overage reset as its primary reset, so
   // the mapper never supplies a separate overage reset in that case.
   const overageReset = notice.overageResetsAt === undefined
     ? ""
-    : `; overage resets at ${new Date(notice.overageResetsAt).toLocaleTimeString()}`;
+    : `; overage resets at ${formatResetInstant(notice.overageResetsAt)}`;
   const overage = notice.overageStatus === undefined
     ? ""
     : `; overage ${notice.overageStatus}${notice.overageDisabledReason ? ` (${notice.overageDisabledReason})` : ""}`;

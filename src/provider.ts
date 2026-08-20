@@ -10,7 +10,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { buildClaudeEnvironment, claudeLaunch } from "./auth.ts";
-import { providerArgs } from "./claude-args.ts";
+import { bridgeCommand, providerArgs } from "./claude-args.ts";
 import { MAX_SYSTEM_PROMPT_BYTES, prepareRequest } from "./context-serializer.ts";
 import { appendCleanupFailure, ClaudeCodeError, errorText } from "./errors.ts";
 import { JsonlParser } from "./jsonl.ts";
@@ -24,6 +24,9 @@ import type { ClaudeInstallation, LogicalProviderPayload, MutableOutput, Request
 
 const MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_MCP_READY_TIMEOUT_MS = 5_000;
+// Bound the stderr excerpt carried into a readiness failure; the full stream is
+// already capped, and an error message is not a log.
+const READY_STDERR_BYTES = 1_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 30 * 60_000;
 /** Internal dependency seam for deterministic cleanup-failure tests. */
@@ -213,9 +216,10 @@ export function createClaudeStream(
         const launch = claudeLaunch(installation.executable, args);
         child = spawn(launch.command, launch.args, {
           cwd: prepared.directory,
-          env: buildClaudeEnvironment(
-            prepared.catalogPath ? { PI_CLAUDE_TOOL_CATALOG: prepared.catalogPath } : undefined,
-          ),
+          env: buildClaudeEnvironment({
+            ...launch.env,
+            ...(prepared.catalogPath ? { PI_CLAUDE_TOOL_CATALOG: prepared.catalogPath } : {}),
+          }),
           detached: process.platform !== "win32",
           windowsHide: process.platform === "win32",
           stdio: ["pipe", "pipe", "pipe"],
@@ -294,7 +298,10 @@ export function createClaudeStream(
         });
 
         if (prepared.readyPath) {
-          await waitForReadyOrExit(prepared.readyPath, readyTimeoutMs, options?.signal, supervisor.wait());
+          await waitForReadyOrExit(prepared.readyPath, readyTimeoutMs, options?.signal, supervisor.wait(), {
+            bridgeCommand: bridgeCommand(prepared.bunConfigPath),
+            stderr: () => stderr,
+          });
           metrics.lastPhase = "mcp_ready";
         }
         if (child.exitCode === null && child.signalCode === null && !options?.signal?.aborted) {
@@ -470,12 +477,21 @@ function validateContextBudget(model: Model<Api>, estimatedInputTokens: number):
   }
 }
 
+/** Evidence carried into a readiness failure, gathered only when one occurs. */
+export interface ReadyDiagnostics {
+  /** The exact command Claude Code was told to launch for the bridge. */
+  bridgeCommand?: string;
+  /** Claude Code's stderr so far, read lazily so a healthy request pays nothing. */
+  stderr?: () => string;
+}
+
 /** Internal test seam for the MCP readiness race. */
 export async function waitForReadyOrExit(
   path: string,
   timeoutMs: number,
   signal: AbortSignal | undefined,
   processResult: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
+  diagnostics: ReadyDiagnostics = {},
 ): Promise<void> {
   let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   void processResult.then((result) => {
@@ -487,13 +503,34 @@ export async function waitForReadyOrExit(
     if (exited) {
       throw new ClaudeCodeError(
         "mcp_startup",
-        `Claude Code exited before the Pi proposal MCP server became ready (code ${String(exited.code)}, signal ${String(exited.signal)})`,
+        `Claude Code exited before the Pi proposal MCP server became ready ` +
+        `(code ${String(exited.code)}, signal ${String(exited.signal)})${readyDiagnosticSuffix(diagnostics)}`,
       );
     }
     if (await pathExists(path)) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
-  throw new ClaudeCodeError("mcp_startup", `Pi proposal MCP server did not become ready within ${timeoutMs}ms`);
+  // Name the resolved command: this timeout is far more often an unlaunchable
+  // bridge than a slow one, and a bare duration sends people to the wrong knob.
+  throw new ClaudeCodeError(
+    "mcp_startup",
+    `Pi proposal MCP server did not become ready within ${timeoutMs}ms${readyDiagnosticSuffix(diagnostics)}`,
+  );
+}
+
+/**
+ * Claude Code reports a failed MCP server in its initialization record, but in
+ * print mode that record can arrive only after the prompt is written, which this
+ * wait precedes. Its stderr is therefore the sole first-hand evidence available
+ * at timeout, so carry it rather than leaving the duration to speak alone.
+ */
+function readyDiagnosticSuffix(diagnostics: ReadyDiagnostics): string {
+  const command = diagnostics.bridgeCommand
+    ? `; Claude Code was told to launch it as: ${diagnostics.bridgeCommand}`
+    : "";
+  const captured = diagnostics.stderr?.().trim() ?? "";
+  const stderr = captured ? `; Claude Code stderr: ${captured.slice(-READY_STDERR_BYTES)}` : "";
+  return `${command}${stderr}; run /pi-claude-code-provider-doctor to complete the handshake directly`;
 }
 
 async function pathExists(path: string): Promise<boolean> {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Type } from "typebox";
 import { prepareRequest, prepareRequestWithLimits } from "../../src/context-serializer.ts";
+import { needsBunConfig } from "../../src/process-utils.ts";
 
 const transcript = (prepared) => prepared.transcriptBlocks.join("\n");
 
@@ -68,12 +69,15 @@ test("serializes Pi context, tools, literal at-paths, and images privately", asy
         assert.equal(messages[1].usage, undefined);
         assert.equal(prepared.attachmentPaths.length, 1);
         assert.equal(prepared.toolNames.size, 1);
+        // The private directory holds exactly what the transport needs and nothing
+        // else. Under a standalone Pi that set also includes the neutral bunfig
+        // that keeps the bridge from preloading a working-directory config.
         const files = (await readdir(prepared.directory)).sort();
-        assert.equal(files.length, 4);
-        assert.equal(files[0], ".pi-claude-code-provider-runtime.json");
-        assert.match(files[1], /^image-[a-f0-9]{64}\.png$/);
-        assert.equal(files[2], "system-prompt.txt");
-        assert.equal(files[3], "tools.json");
+        const expected = [".pi-claude-code-provider-runtime.json", "system-prompt.txt", "tools.json"];
+        if (needsBunConfig()) expected.push("bunfig.toml");
+        assert.equal(files.length, expected.length + 1);
+        assert.deepEqual(files.filter((name) => !/^image-/.test(name)), expected.sort());
+        assert.equal(files.filter((name) => /^image-[a-f0-9]{64}\.png$/.test(name)).length, 1);
     }
     finally {
         await rm(prepared.directory, { recursive: true, force: true });

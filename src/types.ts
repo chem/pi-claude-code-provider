@@ -23,6 +23,7 @@ export interface PreparedRequest {
   catalogPath?: string;
   violationPath?: string;
   readyPath?: string;
+  bunConfigPath?: string;
   toolNames: Map<string, string>;
   transcriptBytes: number;
   catalogBytes: number;

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { VersionStatus } from "./compatibility.ts";
 import { ClaudeCodeError } from "./errors.ts";
+import { hostRuntimeDescription } from "./process-utils.ts";
+import type { BridgeProbeResult } from "./doctor.ts";
 import type { RuntimeCleanupResult } from "./runtime-directories.ts";
 import type { ClaudeInstallation, RequestMetrics, SearchMetrics } from "./types.ts";
 
@@ -21,6 +23,7 @@ export interface DiagnosticReportInput {
   searchMetrics?: SearchMetrics;
   metricsLogError?: string;
   runtimeCleanup: RuntimeCleanupResult;
+  bridgeProbe?: BridgeProbeResult;
 }
 
 /** Write a bounded, content-free report to a new private temp directory. */
@@ -40,6 +43,10 @@ export async function writeDiagnosticReport(input: DiagnosticReportInput): Promi
       platform: process.platform,
       architecture: process.arch,
       nodeVersion: process.version,
+      // Pi ships as an npm package on Node and as a compiled Bun binary. The
+      // distribution, not the version, decides how the bridge must be launched.
+      bunVersion: process.versions.bun,
+      hostRuntime: sanitize(hostRuntimeDescription(), lexicalTempRoot, physicalTempRoot),
       kernelRelease: release(),
       macosVersion,
       shell: sanitize(process.env.SHELL?.trim() || undefined, lexicalTempRoot, physicalTempRoot),
@@ -65,6 +72,13 @@ export async function writeDiagnosticReport(input: DiagnosticReportInput): Promi
         }
       : undefined,
     preflight: diagnosticPreflight(input.preflightError, lexicalTempRoot, physicalTempRoot),
+    bridge: input.bridgeProbe
+      ? {
+          ok: input.bridgeProbe.ok,
+          command: sanitize(input.bridgeProbe.command, lexicalTempRoot, physicalTempRoot),
+          detail: sanitize(input.bridgeProbe.detail, lexicalTempRoot, physicalTempRoot),
+        }
+      : undefined,
     lastRequest: input.metrics,
     lastWebSearch: input.searchMetrics,
     metricsLogError: input.metricsLogError,

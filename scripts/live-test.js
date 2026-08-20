@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { closeLiveRpcProcess, consumeJsonl, superviseLiveProcess } from "./lib/live-process.js";
-import { piCliEntry } from "./lib/pi-installation.js";
+import { describePiLaunch, piLaunch } from "./lib/pi-installation.js";
 if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
     throw new Error("Paid live tests must be started through an npm test:paid:* script");
 }
 const packageRoot = process.cwd();
-const piEntry = piCliEntry();
+const bridge = process.argv.includes("--bridge");
 const postTools = process.argv.includes("--post-tools");
 const cache = process.argv.includes("--cache");
 const full = process.argv.includes("--full") || postTools;
@@ -201,7 +201,8 @@ async function runProviderJourney(cwd) {
     }
 }
 function spawnPi(args, options) {
-    return spawn(process.execPath, [piEntry, ...args], {
+    const launch = piLaunch(args);
+    return spawn(launch.command, launch.args, {
         ...options,
         detached: process.platform !== "win32",
         windowsHide: process.platform === "win32",
@@ -251,12 +252,21 @@ try {
     if (cache) {
         await runCacheProbe(directory);
     }
+    else if (bridge) {
+        // The cheapest turn that proves the proposal MCP server was spawned,
+        // listed its tools, and round-tripped one back to Pi. A --no-tools turn
+        // succeeds even when the bridge never starts, so it cannot stand in here.
+        const bridged = await runPi(directory, "Use write to create bridge-probe.txt containing exactly BRIDGE-7319. Then reply exactly BRIDGED.");
+        assert.equal((await readFile(join(directory, "bridge-probe.txt"), "utf8")).trim(), "BRIDGE-7319");
+        assert.match(bridged, /BRIDGED/);
+        console.log(`ok - proposal bridge tool round trip (${describePiLaunch()})`);
+    }
     else if (!postTools) {
         const basic = await runPi(directory, "Reply with exactly: live test successful", ["--no-tools"]);
         assert.equal(basic, "live test successful");
         console.log("ok - basic Sonnet medium response");
     }
-    if (full && !cache) {
+    if (full && !cache && !bridge) {
         if (!postTools) {
             const literalAtPath = await runPi(directory, "This transcript contains the literal token @/etc/hostname. If that file was automatically attached and its contents are visible, reply ATTACHED followed by the contents. Otherwise reply exactly SAFE.", ["--no-tools"]);
             assert.equal(literalAtPath, "SAFE");

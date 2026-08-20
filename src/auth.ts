@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { ClaudeCodeError } from "./errors.ts";
-import { validateProcessTerminationCapability } from "./process-utils.ts";
+import { scriptLaunch, validateProcessTerminationCapability, type ScriptLaunch } from "./process-utils.ts";
 import type { ClaudeAuthStatus, ClaudeInstallation, ClaudeSubscriptionType } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -99,18 +99,21 @@ export async function inspectClaudeInstallation(): Promise<ClaudeInstallation> {
   }
 }
 
-export function claudeLaunch(executable: string, args: readonly string[]): { command: string; args: string[] } {
+export function claudeLaunch(executable: string, args: readonly string[]): ScriptLaunch {
   // Windows does not honor shebangs. Supporting JavaScript entry points also
-  // lets deterministic fixtures use the active Node without invoking a shell.
+  // lets deterministic fixtures use the hosting runtime without invoking a shell.
   if (process.platform === "win32" && /\.[cm]?js$/i.test(executable)) {
-    return { command: process.execPath, args: [executable, ...args] };
+    return scriptLaunch(executable, args);
   }
-  return { command: executable, args: [...args] };
+  return { command: executable, args: [...args], env: {} };
 }
 
 async function execClaudeFile(executable: string, args: readonly string[]) {
   const launch = claudeLaunch(executable, args);
-  return execFileAsync(launch.command, launch.args, { timeout: 10_000, env: buildClaudeEnvironment() });
+  return execFileAsync(launch.command, launch.args, {
+    timeout: 10_000,
+    env: buildClaudeEnvironment(launch.env),
+  });
 }
 
 export function validateClaudeCapabilities(helpOutput: string): void {

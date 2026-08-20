@@ -24,6 +24,59 @@ export interface ProcessSupervisor {
 
 type ProcessKiller = (pid: number, signal?: NodeJS.Signals | number) => true;
 
+export interface ScriptLaunch {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Launch a JavaScript file under the runtime hosting this extension.
+ *
+ * `process.execPath` is Node under an npm-installed Pi, but under the standalone
+ * tar.gz Pi it is a Bun single-file executable that ignores its arguments and runs
+ * its own embedded entry point instead. BUN_BE_BUN makes such a binary behave as
+ * the plain `bun` CLI, so the same command line works on both distributions
+ * without requiring a separate Node installation.
+ *
+ * Pi compiles its binaries with --no-compile-autoload-bunfig so a `bunfig.toml`
+ * in the working directory cannot preload code into Pi. That is a compile-time
+ * property of Pi's own entry point and does not survive BUN_BE_BUN, so point the
+ * runtime at a neutral config file instead. Only the `--config=` form is honored;
+ * a space-separated argument is silently ignored and swallows the script path.
+ */
+export function scriptLaunch(
+  script: string,
+  args: readonly string[] = [],
+  bunConfigPath?: string,
+  runtime: string = process.execPath,
+  bunVersion: string | undefined = process.versions.bun,
+): ScriptLaunch {
+  const bunArgs = bunVersion && bunConfigPath ? [`--config=${bunConfigPath}`] : [];
+  return {
+    command: runtime,
+    args: [...bunArgs, script, ...args],
+    env: bunVersion ? { BUN_BE_BUN: "1" } : {},
+  };
+}
+
+/** Contents of the neutral bunfig that keeps a working-directory config from preloading code. */
+export const NEUTRAL_BUN_CONFIG = "# Intentionally empty: neutralizes working-directory bunfig preload.\n";
+
+/** Whether a launched script needs a neutral bunfig written beside it. */
+export function needsBunConfig(bunVersion: string | undefined = process.versions.bun): boolean {
+  return Boolean(bunVersion);
+}
+
+/** Identify the runtime hosting this extension; a Pi version alone does not. */
+export function hostRuntimeDescription(
+  execPath: string = process.execPath,
+  bunVersion: string | undefined = process.versions.bun,
+  nodeVersion: string = process.versions.node,
+): string {
+  return `${bunVersion ? `Bun ${bunVersion}` : `Node ${nodeVersion}`} at ${execPath}`;
+}
+
 export function superviseProcess(child: ChildProcess, options: ProcessSupervisorOptions): ProcessSupervisor {
   let idleTimer: NodeJS.Timeout | undefined;
   let totalTimer: NodeJS.Timeout | undefined;

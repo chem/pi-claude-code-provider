@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, ImageContent, Tool } from "@earendil-works/pi-ai";
 import { ClaudeCodeError } from "./errors.ts";
+import { NEUTRAL_BUN_CONFIG, needsBunConfig } from "./process-utils.ts";
 import { createRuntimeDirectory } from "./runtime-directories.ts";
 import type { PreparedRequest } from "./types.ts";
 
@@ -236,6 +237,7 @@ export async function prepareRequestWithLimits(
     let catalogPath: string | undefined;
     let violationPath: string | undefined;
     let readyPath: string | undefined;
+    let bunConfigPath: string | undefined;
     let catalogBytes = 0;
     if (catalog.length > 0) {
       const catalogText = `${JSON.stringify(catalog)}\n`;
@@ -247,6 +249,13 @@ export async function prepareRequestWithLimits(
       violationPath = join(directory, "mcp-execution-attempt");
       readyPath = join(directory, "mcp-ready");
       await writeFile(catalogPath, catalogText, { mode: 0o600, flag: "wx" });
+      if (needsBunConfig()) {
+        // Under a standalone Pi the bridge runs as a plain Bun runtime, which
+        // autoloads a bunfig.toml from its working directory. Pin it to a file
+        // this private directory owns so no other directory can preload code.
+        bunConfigPath = join(directory, "bunfig.toml");
+        await writeFile(bunConfigPath, NEUTRAL_BUN_CONFIG, { mode: 0o600, flag: "wx" });
+      }
     }
 
     const records = [
@@ -272,6 +281,7 @@ export async function prepareRequestWithLimits(
       catalogPath,
       violationPath,
       readyPath,
+      bunConfigPath,
       toolNames: names,
       transcriptBytes,
       catalogBytes,

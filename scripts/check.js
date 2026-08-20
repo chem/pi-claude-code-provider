@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERIFIED_VERSIONS, versionStatus } from "../src/compatibility.ts";
 import { PI_PEERS, dependencyPolicyErrors } from "./lib/dependency-policy.js";
-import { piCliEntry } from "./lib/pi-installation.js";
+import { piLaunch } from "./lib/pi-installation.js";
 import { documentationPolicyErrors } from "./lib/documentation-policy.js";
 import { importedSpecifiers, repositoryFiles } from "./lib/source-policy.js";
 
@@ -89,9 +89,10 @@ function commandVersion(command, args, pattern, required) {
   return version;
 }
 
-// Invoke the JavaScript entry directly: Node cannot execute npm's .cmd shim
+// Invoke the resolved entry directly: Node cannot execute npm's .cmd shim
 // without a shell on Windows, and shell interpolation is unnecessary here.
-const piVersion = commandVersion(process.execPath, [piCliEntry(), "--version"], /\d+\.\d+\.\d+/, true);
+const piVersionLaunch = piLaunch(["--version"]);
+const piVersion = commandVersion(piVersionLaunch.command, piVersionLaunch.args, /\d+\.\d+\.\d+/, true);
 const claudeVersion = commandVersion("claude", ["--version"], /\d+\.\d+\.\d+/, false);
 for (const status of [
   versionStatus("Pi", piVersion, VERIFIED_VERSIONS.pi),

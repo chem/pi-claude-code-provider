@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
-import { locatePiPackages, piCliEntry } from "../../scripts/lib/pi-installation.js";
+import { isCompiledPi, locatePiPackages, piCliEntry } from "../../scripts/lib/pi-installation.js";
 
 test("locates Pi packages in the bundled Windows-installer layout", async () => {
   const prefix = await mkdtemp(join(tmpdir(), "pi-installation-layout-"));
@@ -32,6 +32,51 @@ test("locates Pi packages in the bundled Windows-installer layout", async () => 
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
     else process.env.PATH = originalPath;
+    await rm(prefix, { recursive: true, force: true });
+  }
+});
+
+test("an npm shim resolves even though it is not a shebang script", async () => {
+  const prefix = await mkdtemp(join(tmpdir(), "pi-installation-shim-"));
+  const codingAgent = join(prefix, "node_modules", "@earendil-works", "pi-coding-agent");
+  const shim = join(prefix, "pi");
+  const originalPath = process.env.PATH;
+  try {
+    await Promise.all([codingAgent, join(codingAgent, "node_modules", "@earendil-works", "pi-ai"), join(codingAgent, "node_modules", "typebox")]
+      .map((path) => mkdir(path, { recursive: true })));
+    // npm generates a .cmd batch shim on Windows. Classifying "not a shebang" as
+    // a compiled binary would reject every Windows npm development host.
+    await writeFile(shim, "@ECHO off\r\nSETLOCAL\r\n", { mode: 0o700 });
+    await chmod(shim, 0o700);
+    await writeFile(join(codingAgent, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }));
+    await writeFile(join(codingAgent, "node_modules", "@earendil-works", "pi-ai", "package.json"), JSON.stringify({ name: "@earendil-works/pi-ai" }));
+    await writeFile(join(codingAgent, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox" }));
+    process.env.PATH = `${prefix}${delimiter}${originalPath ?? ""}`;
+    assert.equal(isCompiledPi(shim), false);
+    assert.ok(locatePiPackages().codingAgent.endsWith(join("@earendil-works", "pi-coding-agent")));
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    await rm(prefix, { recursive: true, force: true });
+  }
+});
+
+test("compiled Pi binaries are recognized by executable magic on every target", async () => {
+  const prefix = await mkdtemp(join(tmpdir(), "pi-installation-magic-"));
+  try {
+    const cases = [
+      ["elf", "7f454c4602010100"],
+      ["macho-arm64", "cffaedfe0c000001"],
+      ["macho-universal", "cafebabe00000002"],
+      ["pe", "4d5a90000300"],
+    ];
+    for (const [name, hex] of cases) {
+      const path = join(prefix, name);
+      await writeFile(path, Buffer.from(hex, "hex"));
+      assert.equal(isCompiledPi(path), true, name);
+    }
+    assert.equal(isCompiledPi(join(prefix, "absent")), false);
+  } finally {
     await rm(prefix, { recursive: true, force: true });
   }
 });

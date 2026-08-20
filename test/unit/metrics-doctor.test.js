@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { platformStatus, versionStatus } from "../../src/compatibility.ts";
 import { writeDiagnosticReport } from "../../src/diagnostics.ts";
-import { formatDoctorSummary } from "../../src/doctor.ts";
+import { bridgeCommand } from "../../src/claude-args.ts";
+import { formatDoctorSummary, probeBridge } from "../../src/doctor.ts";
 import { ClaudeCodeError } from "../../src/errors.ts";
 import { appendRequestMetrics, appendSearchMetrics, flushMetricsLog, getLastRequestMetrics, getMetricsLogError, recordRequestMetrics, recordSearchMetrics, serializeRequestMetrics, serializeSearchMetrics } from "../../src/metrics.ts";
 
@@ -123,6 +124,9 @@ test("metrics logging exposes only a sanitized latest failure", async () => {
         else process.env.PI_CLAUDE_CODE_PROVIDER_METRICS_LOG = original;
     }
 });
+function doctorBase() {
+    return { platformStatus: platformStatus("linux", "x64", "6.6-microsoft-standard-WSL2", "Ubuntu"), piStatus: versionStatus("Pi", "1", "1"), claudeStatus: versionStatus("Claude Code", "2", "1"), installation: { executable: "/usr/bin/claude", version: "2", subscriptionType: "pro" }, modelIds: ["sonnet"], runtimeCleanup: { removed: 0, failures: 0 } };
+}
 test("doctor summary handles absent, successful, and failed request diagnostics", () => {
     const base = { platformStatus: platformStatus("linux", "x64", "6.6-microsoft-standard-WSL2", "Ubuntu"), piStatus: versionStatus("Pi", "1", "1"), claudeStatus: versionStatus("Claude Code", "2", "1"), installation: { executable: "/usr/bin/claude", version: "2", subscriptionType: "pro" }, modelIds: ["sonnet"], runtimeCleanup: { removed: 0, failures: 0 } };
     assert.match(formatDoctorSummary(base), /no request metrics recorded/);
@@ -160,6 +164,40 @@ test("diagnostic reports are bounded, private, redacted, and content-free", asyn
         assert.doesNotMatch(contents, /prompt|query|stderr|private@example/i);
     }
     finally {
+        await rm(dirname(path), { recursive: true, force: true });
+    }
+});
+
+test("the doctor completes a real bridge handshake under the hosting runtime", async () => {
+    const probe = await probeBridge();
+    assert.equal(probe.ok, true, probe.detail);
+    assert.equal(probe.command, bridgeCommand());
+    assert.match(probe.detail, /1 tool listed, ready marker written/);
+    // A version or path check passes on an install whose bridge can never start,
+    // so the summary must surface the handshake result and the resolved command.
+    const summary = formatDoctorSummary({ ...doctorBase(), bridgeProbe: probe });
+    assert.match(summary, /bridge ok via /);
+    assert.match(summary, new RegExp(`runtime ${process.versions.bun ? "Bun" : "Node"} `));
+    const broken = formatDoctorSummary({
+        ...doctorBase(),
+        bridgeProbe: { ok: false, command: probe.command, detail: "handshake failed (no tools/list result, ready marker missing)" },
+    });
+    assert.match(broken, /bridge BROKEN via .*ready marker missing/);
+});
+
+test("the diagnostic report records the distribution that decides bridge launching", async () => {
+    const path = await writeDiagnosticReport({
+        ...doctorBase(),
+        bridgeProbe: { ok: false, command: bridgeCommand(), detail: "handshake failed" },
+    });
+    try {
+        const report = JSON.parse(await readFile(path, "utf8"));
+        assert.equal(report.system.bunVersion, process.versions.bun);
+        assert.match(report.system.hostRuntime, /^(Node|Bun) \S+ at /);
+        assert.equal(report.bridge.ok, false);
+        assert.match(report.bridge.detail, /handshake failed/);
+        assert.doesNotMatch(JSON.stringify(report), new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
         await rm(dirname(path), { recursive: true, force: true });
     }
 });

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { basename } from "node:path";
+import { scriptLaunch, type ScriptLaunch } from "./process-utils.ts";
 import type { PreparedRequest } from "./types.ts";
 
 // Empty setting sources plus explicit settings preserve subscription authentication
@@ -8,6 +9,17 @@ import type { PreparedRequest } from "./types.ts";
 const SETTINGS = JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false });
 const EMPTY_MCP = JSON.stringify({ mcpServers: {} });
 export const BRIDGE_PATH = fileURLToPath(new URL("../bridge/mcp-proposal-server.js", import.meta.url));
+
+/** The single owner of how the proposal bridge is launched on either Pi distribution. */
+export function bridgeLaunch(bunConfigPath?: string): ScriptLaunch {
+  return scriptLaunch(BRIDGE_PATH, [], bunConfigPath);
+}
+
+/** The exact command Claude Code is told to run for the proposal bridge. */
+export function bridgeCommand(bunConfigPath?: string): string {
+  const launch = bridgeLaunch(bunConfigPath);
+  return [launch.command, ...launch.args].join(" ");
+}
 
 export function baseClaudeArgs(): string[] {
   return [
@@ -45,13 +57,15 @@ export function providerArgs(
     { type: "text" as const, text: instruction },
     ...prepared.transcriptBlocks.map((text) => ({ type: "text" as const, text })),
   ];
+  const bridge = bridgeLaunch(prepared.bunConfigPath);
   const mcpConfig = prepared.catalogPath
     ? JSON.stringify({
         mcpServers: {
           pi: {
-            command: process.execPath,
-            args: [BRIDGE_PATH],
+            command: bridge.command,
+            args: bridge.args,
             env: {
+              ...bridge.env,
               PI_CLAUDE_TOOL_CATALOG: prepared.catalogPath,
               PI_CLAUDE_TOOL_VIOLATION: prepared.violationPath,
               PI_CLAUDE_TOOL_READY: prepared.readyPath,

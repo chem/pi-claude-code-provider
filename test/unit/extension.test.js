@@ -93,9 +93,14 @@ test("routes rate-limit warnings to the active Pi UI without requiring one", asy
         assert.equal((await provider.streamSimple(model, context, { reasoning: "medium" }).result()).stopReason, "stop");
         const warning = notices.find(({ message }) => message.includes("rate limit warning"));
         assert.deepEqual(warning, {
-            message: `[pi-claude-code-provider] Claude rate limit warning: 87% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleTimeString()}`,
+            message: `[pi-claude-code-provider] Claude rate limit warning: 87% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleString()}`,
             level: "warning",
         });
+        // A seven_day window resets up to a week out, so a bare wall-clock time
+        // reads as "today" and understates the wait by days.
+        const reset = new Date(1_800_000_000_000);
+        assert.ok(warning.message.includes(String(reset.getFullYear())) || warning.message.includes(String(reset.getFullYear() % 100)));
+        assert.ok(!warning.message.endsWith(`resets at ${reset.toLocaleTimeString()}`));
         await pi.handlers.get("session_shutdown")[0]({}, {});
         const records = (await readFile(metricsPath, "utf8")).trim().split("\n").map(JSON.parse);
         assert.equal(records.length, 2);
@@ -177,7 +182,7 @@ test("reports a repeated rate-limit warning once per session", async () => {
         await provider.streamSimple(model, context, { reasoning: "medium" }).result();
         await provider.streamSimple(model, context, { reasoning: "medium" }).result();
         assert.deepEqual(notices.filter(({ message }) => message.includes("rate limit")), [{
-            message: `[pi-claude-code-provider] Claude rate limit warning: 77% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleTimeString()}`,
+            message: `[pi-claude-code-provider] Claude rate limit warning: 77% used (five_hour); resets at ${new Date(1_800_000_000_000).toLocaleString()}`,
             level: "warning",
         }]);
 

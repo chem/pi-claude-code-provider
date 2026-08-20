@@ -2,7 +2,7 @@
 
 ## Setup
 
-A global Pi installation is required. Runtime imports and test types resolve from the active `pi` executable.
+An **npm-installed** global Pi is required. Runtime imports and test types resolve from the active `pi` executable, and only the npm layout exposes those packages: the standalone tar.gz build compiles them into a single binary. A standalone Pi is a supported *runtime target*, not a supported development host, and `npm run check` says so by name if the `pi` on `PATH` is the compiled build.
 
 ```bash
 npm run setup:dev
@@ -23,7 +23,7 @@ pi install /absolute/path/to/pi-claude-code-provider
 - `extensions/pi-claude-code-provider.ts` registers the provider, doctor command, web-search tool, and session cleanup.
 - `src/auth.ts`, `src/claude-args.ts`, and `src/compatibility.ts` own executable, authentication, CLI, and compatibility policy.
 - `src/context-serializer.ts`, `src/provider.ts`, and `src/stream-events.ts` own the semantic transcript and main request lifecycle.
-- `src/process-utils.ts` and `src/runtime-directories.ts` own process-tree and private-state cleanup.
+- `src/process-utils.ts` and `src/runtime-directories.ts` own process-tree, host-runtime launching, and private-state cleanup.
 - `src/web-search.ts` owns separately isolated visible web search.
 - `src/diagnostics.ts`, `src/doctor.ts`, and `src/metrics.ts` own content-free diagnostics.
 - `bridge/mcp-proposal-server.js` exposes tool schemas but cannot execute them.
@@ -37,10 +37,12 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.84.1 |
+| Pi | 0.84.1, npm distribution |
 | Claude Code | 2.1.226 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
+
+Pi's distribution is part of the baseline, not an implementation detail: the npm build runs on Node and the standalone tar.gz build is a compiled Bun binary, and `process.execPath` means something different on each. `src/process-utils.ts` owns that difference in one place (`scriptLaunch`), which sets `BUN_BE_BUN=1` so a compiled Pi binary runs the proposal bridge instead of its own embedded entry point, and pins `--config=` to a neutral `bunfig.toml` in the private request directory. Pi compiles with `--no-compile-autoload-bunfig`, but that protects Pi's own entry point only and does not survive `BUN_BE_BUN`; without the pin, a `bunfig.toml` in the bridge's working directory preloads code into it. Only the joined `--config=` form works, as Bun ignores a space-separated one and then consumes the script path. The mechanism is not Linux-specific: Pi builds all six standalone targets from one `bun build --compile` invocation, and `BUN_BE_BUN` is part of the embedded Bun runtime on each. Record a standalone baseline only after `npm run test:paid:bridge-standalone` passes against that exact build.
 
 Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml); subscription-consuming live Claude validation on macOS remains pending. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
 
@@ -53,15 +55,21 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | Command | Maximum Claude launches |
 | --- | ---: |
 | `npm run test:paid:smoke` | 1 |
+| `npm run test:paid:bridge` | 1 |
+| `npm run test:paid:bridge-standalone` | 1 |
 | `npm run test:paid:post-tools` | 6 |
 | `npm run test:paid:full` | 28 |
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
 | `npm run test:paid:opus` | 1 |
 | `npm run test:paid:matrix` | 20 |
-| `npm run test:paid:release` | 51 |
+| `npm run test:paid:release` | 53 |
 
-The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, the gated aliases, and the supported effort matrix. Fable 5 availability, included quota, and billing vary by subscription tier, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains the opt-in one-launch case for accounts with Fable access. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+`PI_CLAUDE_CODE_PROVIDER_PI_BIN` selects which Pi executable the live scripts launch; without it they launch the npm-hosted CLI entry. This is deliberately separate from package resolution, so one npm-hosted development host can drive both distributions. `bridge-standalone` refuses to start unless that variable is set; point it at an extracted tar.gz `pi`.
+
+Both bridge lanes are required, and `test:paid:release` runs both. A `--no-tools` turn passes even when the proposal bridge never starts, so only a turn that actually round-trips a tool distinguishes a working bridge from a broken one. `/pi-claude-code-provider-doctor` performs the same handshake without consuming quota.
+
+The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable 5 availability, included quota, and billing vary by subscription tier, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains the opt-in one-launch case for accounts with Fable access. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization.
 
@@ -78,7 +86,7 @@ When updating Claude compatibility:
 3. Run guarded live, cache, and model gates only with explicit quota authorization.
 4. Update machine-readable and written baselines only after the gates pass.
 
-When updating Pi compatibility, read the current package, extension, provider, session, and compaction contracts, then test a clean Git or packed installation.
+When updating Pi compatibility, read the current package, extension, provider, session, and compaction contracts, then test a clean Git or packed installation on both the npm and standalone distributions.
 
 ## Release procedure
 

@@ -120,7 +120,7 @@ export async function searchWithClaude(
     const launch = claudeLaunch(installation.executable, args);
     child = spawn(launch.command, launch.args, {
       cwd: directory,
-      env: buildClaudeEnvironment(),
+      env: buildClaudeEnvironment(launch.env),
       detached: process.platform !== "win32",
       windowsHide: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],

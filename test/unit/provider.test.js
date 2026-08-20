@@ -734,6 +734,23 @@ test("MCP readiness has a bounded timeout even while the process remains alive",
     const directory = await mkdtemp(join(tmpdir(), "provider-ready-timeout-"));
     try {
         await assert.rejects(waitForReadyOrExit(join(directory, "missing"), 20, undefined, new Promise(() => { })), /did not become ready within 20ms/);
+        // The failure mode this timeout actually reports is an unlaunchable bridge,
+        // so it must carry the resolved command and Claude's own first-hand output.
+        await assert.rejects(
+            waitForReadyOrExit(join(directory, "missing"), 20, undefined, new Promise(() => { }), {
+                bridgeCommand: "/opt/pi/pi --config=/priv/bunfig.toml /pkg/bridge.js",
+                stderr: () => "  MCP server \"pi\" failed to connect\n",
+            }),
+            (error) => /launch it as: \/opt\/pi\/pi --config=/.test(error.message)
+                && /stderr: MCP server "pi" failed to connect/.test(error.message)
+                && /pi-claude-code-provider-doctor/.test(error.message),
+        );
+        await assert.rejects(
+            // The exit is observed on the second poll, so allow more than one interval.
+            waitForReadyOrExit(join(directory, "missing"), 500, undefined, Promise.resolve({ code: 1, signal: null }), { stderr: () => "boom" }),
+            (error) => /exited before the Pi proposal MCP server became ready \(code 1/.test(error.message)
+                && /stderr: boom/.test(error.message),
+        );
     }
     finally {
         await rm(directory, { recursive: true, force: true });
