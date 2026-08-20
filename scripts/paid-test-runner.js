@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { PAID_LAUNCH_BUDGET_ENV } from "../src/paid-launch-budget.ts";
 import { PI_BIN_ENV, describePiLaunch, piBinOverride } from "./lib/pi-installation.js";
+import { PAID_STAGES, RELEASE_ORDER } from "./lib/paid-stages.js";
 import {
   PAID_CONFIRMATION,
   PAID_CONFIRMATION_ENV,
@@ -15,30 +16,10 @@ import {
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-const stages = {
-  smoke: { label: "smoke", cap: 1, script: "live-test.js", args: [] },
-  // Pi ships as an npm package and as a compiled standalone binary, and the
-  // proposal bridge is spawned differently on each. Both lanes are required.
-  bridge: { label: "npm bridge", cap: 1, script: "live-test.js", args: ["--bridge"] },
-  "bridge-standalone": {
-    label: "standalone bridge",
-    cap: 1,
-    script: "live-test.js",
-    args: ["--bridge"],
-    requiresPiBin: true,
-  },
-  full: { label: "full live", cap: 28, script: "live-test.js", args: ["--full"] },
-  "post-tools": { label: "post-tool live", cap: 6, script: "live-test.js", args: ["--post-tools"] },
-  cache: { label: "cache", cap: 3, script: "live-test.js", args: ["--cache"] },
-  // Fable 5 availability and included quota vary by subscription tier, so its
-  // one-launch case is opt-in and excluded from the blocking gate.
-  fable: { label: "fable model", cap: 1, script: "model-matrix.js", args: ["--case", "fable:medium"] },
-  opus: { label: "opus model", cap: 1, script: "model-matrix.js", args: ["--case", "opus:medium"] },
-  matrix: { label: "model matrix", cap: 20, script: "model-matrix.js", args: [] },
-};
+const stages = PAID_STAGES;
 
 const selected = process.argv[2];
-const releaseOrder = ["full", "cache", "bridge", "bridge-standalone", "matrix"];
+const releaseOrder = RELEASE_ORDER;
 const selectedStages = selected === "release" ? releaseOrder : [selected];
 if (!selected || selectedStages.some((name) => !(name in stages))) {
   throw new Error(`Usage: node scripts/paid-test-runner.js <${[...Object.keys(stages), "release"].join("|")}>`);

@@ -55,15 +55,15 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | Command | Maximum Claude launches |
 | --- | ---: |
 | `npm run test:paid:smoke` | 1 |
-| `npm run test:paid:bridge` | 1 |
-| `npm run test:paid:bridge-standalone` | 1 |
+| `npm run test:paid:bridge` | 3 |
+| `npm run test:paid:bridge-standalone` | 3 |
 | `npm run test:paid:post-tools` | 6 |
 | `npm run test:paid:full` | 28 |
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
 | `npm run test:paid:opus` | 1 |
 | `npm run test:paid:matrix` | 20 |
-| `npm run test:paid:release` | 53 |
+| `npm run test:paid:release` | 57 |
 
 `PI_CLAUDE_CODE_PROVIDER_PI_BIN` selects which Pi executable the live scripts launch; without it they launch the npm-hosted CLI entry. This is deliberately separate from package resolution, so one npm-hosted development host can drive both distributions. `bridge-standalone` refuses to start unless that variable is set; point it at an extracted tar.gz `pi`.
 
