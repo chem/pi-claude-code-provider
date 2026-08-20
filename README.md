@@ -8,12 +8,12 @@ This project was developed using frontier AI models under human guidance. Almost
 
 ## Requirements
 
-- [Pi](https://pi.dev), verified with 0.84.1 on the npm package
-- Claude Code, verified with 2.1.226
+- [Pi](https://pi.dev), verified with 0.84.2 on both the npm package and the standalone build
+- Claude Code, verified with 2.1.237
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 - Node.js 22.19 or newer only when Pi itself is installed from npm; the standalone build needs no separate Node installation
 
-Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live gate, but its verified baseline is still being established, so the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the npm version only. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
+Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live gate, which has passed on Linux x64; the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the exact scope. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
 
 WSL2 Ubuntu and native Windows x64 are verified. Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml), while subscription-consuming live validation remains pending. See the [compatibility baseline](DEVELOPING.md#compatibility-baseline) for current versions and details. Other platforms continue with a warning and runtime capability checks.
 

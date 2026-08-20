@@ -1,8 +1,8 @@
 import { release } from "node:os";
 
 export const VERIFIED_VERSIONS = Object.freeze({
-  pi: "0.84.1",
-  claudeCode: "2.1.226",
+  pi: "0.84.2",
+  claudeCode: "2.1.237",
 });
 
 const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64";

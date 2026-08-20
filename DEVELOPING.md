@@ -37,8 +37,8 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.84.1, npm distribution |
-| Claude Code | 2.1.226 |
+| Pi | 0.84.2, npm distribution; standalone tar.gz build live-verified on Linux x64 only |
+| Claude Code | 2.1.237 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
 

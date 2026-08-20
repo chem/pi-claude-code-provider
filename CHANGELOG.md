@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-20
+
 ### Fixed
 
 - Launch the tool-proposal MCP bridge under the runtime hosting Pi instead of assuming `process.execPath` is Node. On Pi's standalone tar.gz build that path is a compiled Bun binary, which ignored the bridge argument and started its own entry point, so the bridge never became ready and no tool proposal ever reached Pi. The bridge is now launched with `BUN_BE_BUN=1` on that build, which needs no separate Node installation. This applies to every standalone target Pi publishes: macOS arm64/x64, Linux x64/arm64, and Windows x64/arm64.
@@ -18,6 +20,7 @@
 - Include the date in rate-limit reset times. A `seven_day` window can reset almost a week out, so reporting only a wall-clock time read as "today" and understated the wait by days.
 - Name the resolved bridge command and carry Claude Code's stderr in the MCP readiness failures, which previously pointed only at `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` and so sent people to the wrong knob. In print mode Claude reports a failed MCP server only after the prompt is written, which this wait precedes, so its stderr is the sole first-hand evidence available at timeout.
 - `npm run check` now reports by name when the `pi` on `PATH` is the compiled standalone build, which resolves no packages and cannot host development.
+- Update the verified baseline to Pi 0.84.2 and Claude Code 2.1.237, so current installations no longer report as untested. Pi's standalone distribution now has a live-verified baseline of its own, on Linux x64.
 
 ## [0.1.2] - 2026-08-09
 
