@@ -158,6 +158,8 @@ export function createClaudeStream(
       const finalizeLifecycle = async (): Promise<void> => {
         if (finalized) return;
         finalized = true;
+        // Terminal stream publication belongs to the protocol boundary below;
+        // this idempotent finalizer owns only request resources and metrics.
         if (abortHandler) options?.signal?.removeEventListener("abort", abortHandler);
         supervisor?.dispose();
         try {
@@ -184,6 +186,7 @@ export function createClaudeStream(
       };
 
       try {
+        // Phase 1 — prepare Pi's logical payload and private transport state.
         const effectiveContext = await applyPayloadHook(model, context, options);
         metrics.lastPhase = "payload_applied";
         metrics.messageCount = effectiveContext.messages.length;
@@ -238,6 +241,7 @@ export function createClaudeStream(
           totalTimeoutMs,
         );
 
+        // Phase 2 — claim the launch, spawn Claude, and record exact ownership.
         // Pi can cancel before asynchronous request preparation finishes. Do
         // not briefly launch Claude or its MCP child for an already-dead turn;
         // the finally path still removes the prepared private directory.
@@ -292,6 +296,7 @@ export function createClaudeStream(
 
         await recordRuntimeChild(prepared.directory, child.pid ?? 0);
 
+        // Phase 3 — consume and validate Claude's ordered JSONL protocol.
         let recordProcessing = Promise.resolve();
         const failProtocol = (error: unknown): void => {
           if (mapper?.isTerminal) return;
@@ -365,6 +370,7 @@ export function createClaudeStream(
         metrics.lastPhase = "process_exited";
         await terminateCurrent();
 
+        // Phase 4 — validate the exit and private state before publishing success.
         if (toolUse) {
           if (prepared.violationPath && (await pathExists(prepared.violationPath))) {
             errorCategory = "mcp_execution";

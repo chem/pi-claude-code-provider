@@ -77,32 +77,43 @@ function supervisorWithCleanupFailure(child, options) {
         },
     };
 }
-test("provider streams a fake Claude response and honors payload replacement", async () => {
+test("provider streams a fake response after accepting a rich payload replacement", async () => {
     const fake = await fakeClaude(`
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => input += chunk);
-process.stdin.on("end", () => {
-  process.stdout.write(JSON.stringify(${JSON.stringify(init)}) + "\\n");
+const path = require("node:path");
+fs.writeFileSync(path.join(__dirname, "captured-preparation"), JSON.stringify({
+  systemPrompt: fs.readFileSync(path.join(process.cwd(), "system-prompt.txt"), "utf8"),
+  catalog: JSON.parse(fs.readFileSync(path.join(process.cwd(), "tools.json"), "utf8")),
+  files: fs.readdirSync(process.cwd()),
+}));
+setTimeout(() => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(toolInit)}) + "\\n");
   process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"message_start",message:{id:"msg_fake",model:"claude-sonnet-5",usage:{input_tokens:0,output_tokens:0}}}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_start",index:0,content_block:{type:"text",text:""}}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",index:0,delta:{type:"text_delta",text:"fake ok"}}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_stop",index:0}}) + "\\n");
   process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"fake ok",usage:{input_tokens:4,output_tokens:2}}) + "\\n");
-  setTimeout(() => {}, 50);
-});`);
+}, 50);`);
+    const replacement = {
+        systemPrompt: "replacement system",
+        messages: [
+            { role: "user", content: "replacement string", timestamp: 2 },
+            { role: "user", content: [{ type: "text", text: "replacement blocks" }, { type: "image", data: "AA==", mimeType: "image/png" }], timestamp: 3 },
+            { role: "assistant", content: [
+                { type: "text", text: "assistant text" },
+                { type: "thinking", thinking: "assistant thinking", redacted: true },
+                { type: "toolCall", id: "call-paired", name: "read", arguments: { path: "README.md" } },
+            ], timestamp: 4 },
+            { role: "toolResult", toolCallId: "call-paired", toolName: "read", content: [{ type: "text", text: "paired result" }], isError: false, timestamp: 5 },
+            { role: "toolResult", toolCallId: "call-orphan", toolName: "removed-tool", content: [{ type: "text", text: "orphan result" }], isError: true, timestamp: 6 },
+        ],
+        tools: toolContext.tools,
+    };
+    let claims = 0;
     try {
-        const stream = createClaudeStream({
-            executable: fake.executable,
-            version: "2.1.206",
-            subscriptionType: "pro",
-        })(model, context, {
-            reasoning: "medium",
-            onPayload(payload) {
-                const logical = payload;
-                return { ...logical, messages: [{ role: "user", content: "replacement", timestamp: 2 }] };
-            },
-        });
+        const stream = createClaudeStream(
+            { executable: fake.executable, version: "2.1.206", subscriptionType: "pro" },
+            { claimLaunch: async () => { claims++; } },
+        )(model, context, { reasoning: "medium", onPayload: () => replacement });
         const eventTypes = [];
         for await (const event of stream)
             eventTypes.push(event.type);
@@ -112,8 +123,16 @@ process.stdin.on("end", () => {
         assert.equal(result.usage.totalTokens, 6);
         assert.equal(result.usage.cost.total, 0);
         assert.equal(result.content[0]?.type, "text");
+        assert.equal(claims, 1);
+        const captured = JSON.parse(await readFile(join(fake.dir, "captured-preparation"), "utf8"));
+        assert.equal(captured.systemPrompt, "replacement system");
+        assert.deepEqual(captured.catalog, [{ name: "read", description: "read", inputSchema: toolContext.tools[0].parameters }]);
+        assert.ok(captured.files.some((name) => /^image-[0-9a-f]{64}\.png$/.test(name)));
         const metrics = await waitForRequestMetrics((entry) => entry.stopReason === "stop");
         assert.equal(metrics.schemaVersion, 4);
+        assert.equal(metrics.messageCount, replacement.messages.length);
+        assert.equal(metrics.toolCount, 1);
+        assert.equal(metrics.imageCount, 1);
         assert.equal(metrics.terminationExpected, false);
     }
     finally {
@@ -402,9 +421,12 @@ setInterval(() => {}, 1000);`);
             subscriptionType: "pro",
         })(model, context, { reasoning: "medium", signal: controller.signal });
         setTimeout(() => controller.abort(), 50);
+        const events = [];
+        for await (const event of stream) events.push(event.type);
         const result = await stream.result();
         assert.equal(result.stopReason, "aborted");
         assert.match(result.errorMessage ?? "", /aborted/);
+        assert.equal(events.filter((type) => type === "done" || type === "error").length, 1);
         const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "aborted");
         assert.equal(metrics.terminationExpected, true);
     }

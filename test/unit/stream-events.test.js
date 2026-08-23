@@ -211,6 +211,7 @@ test("maps an explicit Claude error result to one terminal error", async () => {
     })();
     init(mapper);
     mapper.accept({ type: "result", is_error: true, api_error_status: 429, result: "subscription limit reached" });
+    mapper.fail("late duplicate failure");
     await consume;
     assert.deepEqual(events, ["start", "error"]);
     assert.equal(output.stopReason, "error");

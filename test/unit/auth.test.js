@@ -11,6 +11,16 @@ import { nodeFixtureSource } from "../support/node-fixture.js";
 
 const bracketedSystemPromptHelp = CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]");
 
+function missingClaudeCapabilities(help) {
+    try {
+        validateClaudeCapabilities(help);
+        return [];
+    } catch (error) {
+        assert.match(error.message, /missing required headless capabilities:/);
+        return error.message.split(": ").at(-1).split(", ");
+    }
+}
+
 test("normalizes every eligible subscription without returning PII", () => {
     for (const subscriptionType of ["pro", "max", "team", "enterprise"]) {
         const status = { ...ELIGIBLE_CLAUDE_AUTH, subscriptionType: subscriptionType.toUpperCase() };
@@ -48,26 +58,21 @@ test("builds an allowlisted Claude environment", () => {
 test("requires the Claude Code headless command surface", () => {
     assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP));
     assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_2_1_241_HEADLESS_HELP));
-    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--effort", "")), /--effort/);
-    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt-file", "")), /--system-prompt-file/);
-    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt\n", "")), /--system-prompt/);
-    assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--permission-mode", "")), /--permission-mode/);
+    const requiredOptions = CLAUDE_HEADLESS_HELP.split("\n").filter(Boolean);
+    for (const option of requiredOptions) {
+        const omitted = requiredOptions.filter((candidate) => candidate !== option).join("\n");
+        assert.equal(missingClaudeCapabilities(option).includes(option), false, `${option} positive token`);
+        assert.equal(missingClaudeCapabilities(omitted).includes(option), true, `${option} omission`);
+        assert.equal(missingClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace(option, `${option}-old`)).includes(option), true, `${option} near miss`);
+    }
 });
 
-test("matches complete Claude option tokens, aliases, and documented shorthand", () => {
-    for (const [option, decoy] of [
-        ["--model", "--model-config"],
-        ["--tools", "--tools-extra"],
-        ["--effort", "--effortful"],
-        ["--system-prompt", "--system-prompt-old"],
-        ["--system-prompt-file", "--system-prompt-file-old"],
-    ]) {
-        const help = CLAUDE_HEADLESS_HELP.replace(option, decoy);
-        assert.throws(() => validateClaudeCapabilities(help), new RegExp(option.replaceAll("-", "\\-")));
-    }
+test("matches option aliases, value notation, and documented shorthand", () => {
     assert.doesNotThrow(() => validateClaudeCapabilities(
         CLAUDE_HEADLESS_HELP
-            .replace("--allowedTools", "--allowedTools, --allowed-tools <tools...>")
+            .replace("--allowedTools", "--allowedTools, --allowed-tools=<tools...>")
+            .replace("--model", "--model=<model>")
+            .replace("--prompt-suggestions", "--prompt-suggestions [value]")
             .replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file] <prompt>"),
     ));
     assert.throws(

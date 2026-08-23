@@ -22,8 +22,15 @@ export function documentationPolicyErrors(root, markdownFiles, verifiedVersions)
   }
   const compatibilityPath = join(root, "DEVELOPING.md");
   const compatibility = readFileSync(compatibilityPath, "utf8");
-  for (const version of Object.values(verifiedVersions)) {
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  if (!readme.includes("](DEVELOPING.md#compatibility-baseline)")) {
+    errors.push("README.md must link to DEVELOPING.md#compatibility-baseline");
+  }
+  for (const [component, version] of Object.entries(verifiedVersions)) {
     if (!compatibility.includes(version)) errors.push(`DEVELOPING.md omits verified version ${version}`);
+    if (readme.includes(version)) {
+      errors.push(`README.md duplicates verified ${component} version ${version}; DEVELOPING.md owns compatibility baselines`);
+    }
   }
   return errors;
 }

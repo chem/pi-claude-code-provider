@@ -39,6 +39,8 @@ System prompts, transcript attachments, catalogs, and markers live in randomized
 
 Cancellation is checked before launch, so an already-cancelled provider or web-search request starts no Claude process; after launch, cancellation terminates the owned process. Normal success, failure, timeout, and cancellation remove private request state. A bounded POSIX recovery pass removes only old, same-user, package-marked directories whose recorded processes are gone. Windows does not perform automatic stale recovery because Node provides no equivalent ownership check.
 
+Protocol outcomes are published through `ClaudeEventMapper`, whose failure and completion gates are idempotent; setup failures that occur before a mapper exists are published directly by the provider. The request finalizer deliberately does not publish a second terminal event: it owns abort-listener disposal, last-chance safe directory cleanup, and exactly-once metrics. This keeps protocol mapping separate from process and storage finalization while preserving the rule that success follows cleanup.
+
 Host crashes and forceful termination can bypass cleanup. On Windows, `taskkill` cannot reconstruct descendants after their root exits, so normal Claude shutdown is trusted to close its children. Name-based termination is deliberately prohibited because it could kill unrelated sessions.
 
 ## Web search
