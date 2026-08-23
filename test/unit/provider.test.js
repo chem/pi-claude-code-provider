@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { createClaudeStream, isExpectedToolHandoffExit, waitForReadyOrExit } from "../../src/provider.ts";
 import { getLastRequestMetrics } from "../../src/metrics.ts";
+import { superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
 import { nodeFixtureSource } from "../support/node-fixture.js";
+import { PROVIDER_INIT_FIELDS, initRecord } from "../support/claude-fixture.js";
 const model = {
     id: "sonnet",
     name: "Sonnet",
@@ -37,18 +39,7 @@ async function fakeClaude(body, { writeReady = true } = {}) {
     await chmod(executable, 0o700);
     return { dir, executable };
 }
-const init = {
-    type: "system",
-    subtype: "init",
-    tools: [],
-    mcp_servers: [],
-    model: "claude-sonnet-5",
-    permissionMode: "dontAsk",
-    slash_commands: [],
-    skills: [],
-    plugins: [],
-    apiKeySource: "none",
-};
+const init = initRecord(PROVIDER_INIT_FIELDS);
 const toolInit = {
     ...init,
     tools: ["mcp__pi__read"],
@@ -74,6 +65,17 @@ async function waitForRequestMetrics(predicate) {
         await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error("request metrics did not settle");
+}
+function supervisorWithCleanupFailure(child, options) {
+    const supervisor = superviseProcess(child, options);
+    let termination;
+    return {
+        ...supervisor,
+        terminate() {
+            termination ??= supervisor.terminate().then(() => { throw new Error("synthetic process-group EPERM"); });
+            return termination;
+        },
+    };
 }
 test("provider streams a fake Claude response and honors payload replacement", async () => {
     const fake = await fakeClaude(`
@@ -115,6 +117,43 @@ process.stdin.on("end", () => {
         assert.equal(metrics.terminationExpected, false);
     }
     finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider rejects malformed logical payloads before claim or spawn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "provider-payload-invalid-"));
+    const marker = join(root, "spawned");
+    const fake = await fakeClaude(`fs.writeFileSync(${JSON.stringify(marker)}, "spawned");`);
+    const circular = {};
+    circular.self = circular;
+    const invalidMessages = [
+        [{ role: "future", content: [] }],
+        [{ role: "user", content: [{ type: "text", text: 42 }] }],
+        [{ role: "assistant", content: [{ type: "thinking", thinking: false }] }],
+        [{ role: "assistant", content: [{ type: "toolCall", id: 1, name: "read", arguments: {} }] }],
+        [{ role: "assistant", content: [{ type: "toolCall", id: "call", name: "read", arguments: [] }] }],
+        [{ role: "toolResult", toolCallId: "call", toolName: "read", content: [], isError: "false" }],
+        [{ role: "user", content: [{ type: "image", data: "AA==" }] }],
+    ];
+    const replacements = [
+        ...invalidMessages.map((messages) => ({ messages, tools: [] })),
+        { messages: context.messages, tools: [{ name: "read", description: "read", parameters: [] }] },
+        { messages: context.messages, tools: [{ name: "read", description: "read", parameters: circular }] },
+    ];
+    let claims = 0;
+    try {
+        for (const replacement of replacements) {
+            const result = await createClaudeStream(
+                { executable: fake.executable, version: "test", subscriptionType: "pro" },
+                { claimLaunch: async () => { claims++; } },
+            )(model, context, { onPayload: () => replacement }).result();
+            assert.equal(result.stopReason, "error");
+            assert.match(result.errorMessage ?? "", /logical|payload|JSON-serializable|Unsupported|boolean/i);
+        }
+        assert.equal(claims, 0);
+        await assert.rejects(access(marker));
+    } finally {
+        await rm(root, { recursive: true, force: true });
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
@@ -175,18 +214,12 @@ process.stdin.on("end", () => {
   process.stdout.write(JSON.stringify(${JSON.stringify(init)}) + "\\n");
   process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"must not succeed",usage:{}}) + "\\n");
 });`);
-    const originalKill = process.kill;
-    process.kill = ((pid, signal) => {
-        if (pid < 0) {
-            const error = new Error("synthetic process-group EPERM");
-            error.code = "EPERM";
-            throw error;
-        }
-        return originalKill(pid, signal);
-    });
     try {
         const result = await Promise.race([
-            createClaudeStream({ executable: fake.executable, version: "test", subscriptionType: "pro" })(model, context, { reasoning: "medium" }).result(),
+            createClaudeStream(
+                { executable: fake.executable, version: "test", subscriptionType: "pro" },
+                { supervise: supervisorWithCleanupFailure },
+            )(model, context, { reasoning: "medium" }).result(),
             new Promise((_, reject) => setTimeout(() => reject(new Error("provider stream did not settle")), 1000)),
         ]);
         assert.equal(result.stopReason, "error");
@@ -195,7 +228,51 @@ process.stdin.on("end", () => {
         assert.equal(metrics.cleanupComplete, true);
     }
     finally {
-        process.kill = originalKill;
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider settles once and retains marked state when process death is unknown", { skip: process.platform === "win32" }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "provider-unknown-liveness-"));
+    const originalTmpdir = process.env.TMPDIR;
+    const originalIdle = process.env.PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS;
+    process.env.TMPDIR = root;
+    process.env.PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS = "30";
+    const fake = await fakeClaude(`setInterval(() => {}, 1000);`);
+    let capturedChild;
+    const superviseUnknown = (child, options) => {
+        capturedChild = child;
+        return superviseProcess(child, {
+            ...options,
+            terminate: async () => { throw new Error("synthetic stubborn provider EPERM"); },
+        });
+    };
+    try {
+        const stream = createClaudeStream(
+            { executable: fake.executable, version: "test", subscriptionType: "pro" },
+            { supervise: superviseUnknown },
+        )(model, context, { timeoutMs: 1_000 });
+        const events = [];
+        for await (const event of stream) events.push(event.type);
+        const result = await Promise.race([
+            stream.result(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("provider stream did not settle")), 500)),
+        ]);
+        assert.equal(result.stopReason, "error");
+        assert.equal(events.filter((type) => type === "error" || type === "done").length, 1);
+        const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "process_cleanup" && entry.cleanupComplete === false);
+        assert.equal(metrics.cleanupComplete, false);
+        assert.match(result.errorMessage ?? "", /runtime state was retained/);
+        const directories = (await readdir(root)).filter((name) => name.startsWith("pi-claude-code-provider-request-"));
+        assert.equal(directories.length, 1);
+        const marker = JSON.parse(await readFile(join(root, directories[0], ".pi-claude-code-provider-runtime.json"), "utf8"));
+        assert.equal(marker.childPid, capturedChild.pid);
+        assert.doesNotThrow(() => process.kill(capturedChild.pid, 0));
+    } finally {
+        if (capturedChild) await terminateProcessGroup(capturedChild);
+        if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
+        if (originalIdle === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS = originalIdle;
+        await rm(root, { recursive: true, force: true });
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
@@ -214,6 +291,31 @@ process.stdin.on("end", () => {
         await assert.rejects(access(privateDirectory));
     }
     finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider forwards and reserves Pi's effective per-request output limit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "provider-max-tokens-"));
+    const marker = join(directory, "max-tokens");
+    const fake = await fakeClaude(`
+fs.writeFileSync(${JSON.stringify(marker)}, process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS ?? "missing");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(init)}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"bounded",usage:{},modelUsage:{sonnet:{contextWindow:3000,maxOutputTokens:64000}}}) + "\\n");
+});`);
+    try {
+        const boundedModel = { ...model, contextWindow: 3_000, maxTokens: 64_000 };
+        const result = await createClaudeStream({ executable: fake.executable, version: "test", subscriptionType: "pro" })(
+            boundedModel,
+            context,
+            { maxTokens: 2_048 },
+        ).result();
+        assert.equal(result.stopReason, "stop", result.errorMessage);
+        assert.equal(await readFile(marker, "utf8"), "2048");
+        assert.equal(getLastRequestMetrics()?.servedMaxOutputTokens, 64_000);
+    } finally {
+        await rm(directory, { recursive: true, force: true });
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
@@ -364,7 +466,7 @@ test("provider does not spawn Claude when the request aborts during the launch c
             executable: fake.executable,
             version: "test",
             subscriptionType: "pro",
-        }, undefined, undefined, abortDuringClaim)(model, context, { reasoning: "medium", signal: controller.signal });
+        }, { claimLaunch: abortDuringClaim })(model, context, { reasoning: "medium", signal: controller.signal });
         const result = await stream.result();
         assert.equal(result.stopReason, "aborted");
         assert.match(result.errorMessage ?? "", /aborted/);
@@ -498,7 +600,7 @@ process.stdin.on("end", () => {
     try {
         const result = await createClaudeStream(
             { executable: fake.executable, version: "test", subscriptionType: "pro" },
-            failCleanup,
+            { cleanupDirectory: failCleanup },
         )(model, toolContext, { reasoning: "medium" }).result();
         assert.equal(result.stopReason, "error");
         assert.match(result.errorMessage ?? "", /Security invariant violated/);
@@ -738,10 +840,10 @@ test("MCP readiness has a bounded timeout even while the process remains alive",
         // so it must carry the resolved command and Claude's own first-hand output.
         await assert.rejects(
             waitForReadyOrExit(join(directory, "missing"), 20, undefined, new Promise(() => { }), {
-                bridgeCommand: "/opt/pi/pi --config=/priv/bunfig.toml /pkg/bridge.js",
+                bridgeArgv: ["/opt/pi/pi", "--config=/priv/bunfig.toml", "/pkg/bridge.js"],
                 stderr: () => "  MCP server \"pi\" failed to connect\n",
             }),
-            (error) => /launch it as: \/opt\/pi\/pi --config=/.test(error.message)
+            (error) => /launch argv: \["\/opt\/pi\/pi","--config=/.test(error.message)
                 && /stderr: MCP server "pi" failed to connect/.test(error.message)
                 && /pi-claude-code-provider-doctor/.test(error.message),
         );
@@ -802,7 +904,7 @@ test("provider retains a caught failure category when private cleanup also fails
         throw new Error("synthetic cleanup failure");
     };
     try {
-        const result = await createClaudeStream(installation, failCleanup)(tinyModel, context, { reasoning: "medium" }).result();
+        const result = await createClaudeStream(installation, { cleanupDirectory: failCleanup })(tinyModel, context, { reasoning: "medium" }).result();
         assert.equal(result.stopReason, "error");
         assert.match(result.errorMessage ?? "", /context_length_exceeded/);
         assert.match(result.errorMessage ?? "", /private request cleanup failed: synthetic cleanup failure/);

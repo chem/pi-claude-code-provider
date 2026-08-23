@@ -4,7 +4,8 @@ import { promisify } from "node:util";
 import { constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { ClaudeCodeError } from "./errors.ts";
-import { scriptLaunch, validateProcessTerminationCapability, type ScriptLaunch } from "./process-utils.ts";
+import { scriptLaunch, type ScriptLaunch } from "./host-runtime.ts";
+import { validateProcessTerminationCapability } from "./process-utils.ts";
 import type { ClaudeAuthStatus, ClaudeInstallation, ClaudeSubscriptionType } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -117,15 +118,22 @@ async function execClaudeFile(executable: string, args: readonly string[]) {
 }
 
 export function validateClaudeCapabilities(helpOutput: string): void {
-  const missing: string[] = REQUIRED_HEADLESS_FLAGS.filter((flag) => !helpOutput.includes(flag));
-  if (!/(?:^|\s)--system-prompt(?:\s|<|\[|$)/m.test(helpOutput)) missing.push("--system-prompt");
-  if (!/--system-prompt(?:-file|\[-file\])/.test(helpOutput)) missing.push("--system-prompt-file");
+  const missing: string[] = REQUIRED_HEADLESS_FLAGS.filter((flag) => !hasCliOption(helpOutput, flag));
+  if (!hasCliOption(helpOutput, "--system-prompt")) missing.push("--system-prompt");
+  if (!hasCliOption(helpOutput, "--system-prompt-file")) missing.push("--system-prompt-file");
   if (missing.length > 0) {
     throw new ClaudeCodeError(
       "capability_missing",
       `Claude Code is missing required headless capabilities: ${missing.join(", ")}`,
     );
   }
+}
+
+function hasCliOption(helpOutput: string, option: string): boolean {
+  const bracketedSystemPrompt = /(?:^|[\s,])--system-prompt\[-file\](?=$|[\s,=<\[])/m.test(helpOutput);
+  if (bracketedSystemPrompt && (option === "--system-prompt" || option === "--system-prompt-file")) return true;
+  const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s,])${escaped}(?=$|[\\s,=<\\[])`, "m").test(helpOutput);
 }
 
 async function resolveExecutable(configured: string, label: string, code: string): Promise<string> {
@@ -187,7 +195,6 @@ export function buildClaudeEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.Pr
     if (process.env[name] !== undefined) env[name] = process.env[name];
   }
   env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
-  env.DISABLE_NON_ESSENTIAL_MODEL_CALLS = "1";
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   return { ...env, ...extra };
 }

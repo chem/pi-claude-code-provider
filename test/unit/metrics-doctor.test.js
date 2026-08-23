@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { platformStatus, versionStatus } from "../../src/compatibility.ts";
 import { writeDiagnosticReport } from "../../src/diagnostics.ts";
-import { bridgeCommand } from "../../src/claude-args.ts";
+import { bridgeArgv, formatBridgeArgv } from "../../src/claude-args.ts";
 import { formatDoctorSummary, probeBridge } from "../../src/doctor.ts";
 import { ClaudeCodeError } from "../../src/errors.ts";
 import { appendRequestMetrics, appendSearchMetrics, flushMetricsLog, getLastRequestMetrics, getMetricsLogError, recordRequestMetrics, recordSearchMetrics, serializeRequestMetrics, serializeSearchMetrics } from "../../src/metrics.ts";
@@ -137,6 +137,7 @@ test("doctor summary handles absent, successful, and failed request diagnostics"
     assert.match(failed, /error \(protocol\)/);
     assert.match(formatDoctorSummary({ ...base, metricsLogError: "EACCES" }), /metrics log error: EACCES/);
     assert.match(formatDoctorSummary({ ...base, runtimeCleanup: { removed: 2, failures: 1 } }), /stale runtime cleanup: 2 removed, 1 failure/);
+    assert.match(formatDoctorSummary({ ...base, metrics: { ...metrics, cleanupComplete: false, errorCategory: "process_cleanup" } }), /process_cleanup.*cleanup incomplete/);
     assert.doesNotMatch(failed, /prompt|secret|pi-claude-code-provider-/i);
 });
 
@@ -155,7 +156,7 @@ test("diagnostic reports are bounded, private, redacted, and content-free", asyn
         }
         const contents = await readFile(path, "utf8");
         assert.ok(Buffer.byteLength(contents) < 64 * 1024);
-        assert.match(contents, /pi-claude-code-provider-diagnostics-v1/);
+        assert.match(contents, /pi-claude-code-provider-diagnostics-v2/);
         assert.match(contents, /<HOME>/);
         assert.match(contents, /"runtimeCleanup"/);
         assert.match(contents, /"removed": 2/);
@@ -171,7 +172,7 @@ test("diagnostic reports are bounded, private, redacted, and content-free", asyn
 test("the doctor completes a real bridge handshake under the hosting runtime", async () => {
     const probe = await probeBridge();
     assert.equal(probe.ok, true, probe.detail);
-    assert.equal(probe.command, bridgeCommand());
+    assert.deepEqual(probe.argv, bridgeArgv());
     assert.match(probe.detail, /1 tool listed, ready marker written/);
     // A version or path check passes on an install whose bridge can never start,
     // so the summary must surface the handshake result and the resolved command.
@@ -180,7 +181,7 @@ test("the doctor completes a real bridge handshake under the hosting runtime", a
     assert.match(summary, new RegExp(`runtime ${process.versions.bun ? "Bun" : "Node"} `));
     const broken = formatDoctorSummary({
         ...doctorBase(),
-        bridgeProbe: { ok: false, command: probe.command, detail: "handshake failed (no tools/list result, ready marker missing)" },
+        bridgeProbe: { ok: false, argv: probe.argv, detail: "handshake failed (no tools/list result, ready marker missing)" },
     });
     assert.match(broken, /bridge BROKEN via .*ready marker missing/);
 });
@@ -188,16 +189,27 @@ test("the doctor completes a real bridge handshake under the hosting runtime", a
 test("the diagnostic report records the distribution that decides bridge launching", async () => {
     const path = await writeDiagnosticReport({
         ...doctorBase(),
-        bridgeProbe: { ok: false, command: bridgeCommand(), detail: "handshake failed" },
+        bridgeProbe: { ok: false, argv: bridgeArgv(), detail: "handshake failed" },
     });
     try {
         const report = JSON.parse(await readFile(path, "utf8"));
         assert.equal(report.system.bunVersion, process.versions.bun);
         assert.match(report.system.hostRuntime, /^(Node|Bun) \S+ at /);
         assert.equal(report.bridge.ok, false);
+        assert.ok(Array.isArray(report.bridge.argv));
         assert.match(report.bridge.detail, /handshake failed/);
         assert.doesNotMatch(JSON.stringify(report), new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     } finally {
         await rm(dirname(path), { recursive: true, force: true });
     }
+});
+
+test("bridge argv diagnostics preserve argument boundaries", () => {
+    const argv = ["/runtime with space/pi", "--config=/private config/bunfig.toml", "/package path/bridge.js"];
+    assert.deepEqual(JSON.parse(formatBridgeArgv(argv)), argv);
+    const summary = formatDoctorSummary({
+        ...doctorBase(),
+        bridgeProbe: { ok: false, argv, detail: "handshake failed" },
+    });
+    assert.ok(summary.includes(formatBridgeArgv(argv)));
 });

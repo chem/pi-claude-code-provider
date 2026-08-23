@@ -6,7 +6,7 @@ import test from "node:test";
 import { buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, validateClaudeCapabilities } from "../../src/auth.ts";
 import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { validateProcessTerminationCapability, windowsTaskkillExecutable } from "../../src/process-utils.ts";
-import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
+import { CLAUDE_2_1_241_HEADLESS_HELP, CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
 import { nodeFixtureSource } from "../support/node-fixture.js";
 
 const bracketedSystemPromptHelp = CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]");
@@ -32,7 +32,8 @@ test("builds an allowlisted Claude environment", () => {
         for (const name of forbidden)
             assert.equal(env[name], undefined);
         assert.equal(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1");
-        assert.equal(env.DISABLE_NON_ESSENTIAL_MODEL_CALLS, "1");
+        assert.equal(env.DISABLE_NON_ESSENTIAL_MODEL_CALLS, undefined);
+        assert.equal(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
         assert.equal(env.HOME, process.env.HOME);
     }
     finally {
@@ -46,10 +47,33 @@ test("builds an allowlisted Claude environment", () => {
 });
 test("requires the Claude Code headless command surface", () => {
     assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP));
+    assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_2_1_241_HEADLESS_HELP));
     assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--effort", "")), /--effort/);
     assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt-file", "")), /--system-prompt-file/);
     assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt\n", "")), /--system-prompt/);
     assert.throws(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--permission-mode", "")), /--permission-mode/);
+});
+
+test("matches complete Claude option tokens, aliases, and documented shorthand", () => {
+    for (const [option, decoy] of [
+        ["--model", "--model-config"],
+        ["--tools", "--tools-extra"],
+        ["--effort", "--effortful"],
+        ["--system-prompt", "--system-prompt-old"],
+        ["--system-prompt-file", "--system-prompt-file-old"],
+    ]) {
+        const help = CLAUDE_HEADLESS_HELP.replace(option, decoy);
+        assert.throws(() => validateClaudeCapabilities(help), new RegExp(option.replaceAll("-", "\\-")));
+    }
+    assert.doesNotThrow(() => validateClaudeCapabilities(
+        CLAUDE_HEADLESS_HELP
+            .replace("--allowedTools", "--allowedTools, --allowed-tools <tools...>")
+            .replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file] <prompt>"),
+    ));
+    assert.throws(
+        () => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]-old")),
+        /--system-prompt/,
+    );
 });
 
 // Fake Claude programs use synchronous test-only stdio because some restricted

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -50,7 +50,7 @@ process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "
     await chmod(executable, 0o700);
     try {
         const installation = { executable, version: "test", subscriptionType: "pro" };
-        assert.equal(await searchWithClaude(installation, "query", undefined, undefined), "sourced result");
+        assert.equal(await searchWithClaude(installation, { query: "query" }), "sourced result");
         const metrics = getLastSearchMetrics();
         assert.equal(metrics.lastPhase, "completed");
         assert.equal(metrics.initialized, true);
@@ -72,7 +72,7 @@ process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:tr
         const notices = [];
         const installation = { executable: fake.executable, version: "test", subscriptionType: "pro" };
         await assert.rejects(
-            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, undefined, (notice) => notices.push(notice)),
+            searchWithClaude(installation, { query: "query" }, { onRateLimitNotice: (notice) => notices.push(notice) }),
             /429.*search loop failed/,
         );
         assert.deepEqual(notices, [{
@@ -98,7 +98,7 @@ process.stdout.write(JSON.stringify(rateLimitEvent) + "\\n");
 process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"sourced result"}) + "\\n");`);
         try {
             const installation = { executable: fake.executable, version: "test", subscriptionType: "pro" };
-            assert.equal(await searchWithClaude(installation, "query", undefined, undefined), "sourced result");
+            assert.equal(await searchWithClaude(installation, { query: "query" }), "sourced result");
         }
         finally {
             await rm(fake.directory, { recursive: true, force: true });
@@ -113,7 +113,7 @@ process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"must n
     try {
         const installation = { executable: successful.executable, version: "test", subscriptionType: "pro" };
         await assert.rejects(
-            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, supervisorWithCleanupFailure),
+            searchWithClaude(installation, { query: "query" }, { supervise: supervisorWithCleanupFailure }),
             /synthetic search process-group EPERM/,
         );
         const metrics = getLastSearchMetrics();
@@ -125,12 +125,60 @@ process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"must n
     }
 });
 
+test("web search rejects promptly and retains marked state when process death is unknown", { skip: process.platform === "win32" }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "search-unknown-liveness-"));
+    const originalTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = root;
+    const fake = await fakeSearch(`setInterval(() => {}, 1000);`);
+    let capturedChild;
+    const superviseUnknown = (child, options) => {
+        capturedChild = child;
+        return superviseProcess(child, {
+            ...options,
+            terminate: async () => { throw new Error("synthetic stubborn search EPERM"); },
+        });
+    };
+    try {
+        await assert.rejects(
+            Promise.race([
+                searchWithClaude(
+                    { executable: fake.executable, version: "test", subscriptionType: "pro" },
+                    { query: "query" },
+                    { timeoutMs: 30, supervise: superviseUnknown },
+                ),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("web search did not settle")), 500)),
+            ]),
+            /runtime state was retained/,
+        );
+        const metrics = getLastSearchMetrics();
+        assert.equal(metrics.errorCategory, "process_cleanup");
+        assert.equal(metrics.cleanupComplete, false);
+        const directories = [];
+        for (const name of await readdir(root)) {
+            if (!name.startsWith("pi-claude-code-provider-search-")) continue;
+            try {
+                await access(join(root, name, ".pi-claude-code-provider-runtime.json"));
+                directories.push(name);
+            } catch { /* Ignore the fake executable directory. */ }
+        }
+        assert.equal(directories.length, 1);
+        const marker = JSON.parse(await readFile(join(root, directories[0], ".pi-claude-code-provider-runtime.json"), "utf8"));
+        assert.equal(marker.childPid, capturedChild.pid);
+        assert.doesNotThrow(() => process.kill(capturedChild.pid, 0));
+    } finally {
+        if (capturedChild) await terminateProcessGroup(capturedChild);
+        if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
+        await rm(root, { recursive: true, force: true });
+        await rm(fake.directory, { recursive: true, force: true });
+    }
+});
+
 test("web search preserves a protocol failure when process cleanup also fails", async () => {
     const malformed = await fakeSearch(`process.stdout.write("not json");`);
     try {
         const installation = { executable: malformed.executable, version: "test", subscriptionType: "pro" };
         await assert.rejects(
-            searchWithClaude(installation, "query", undefined, undefined, undefined, undefined, supervisorWithCleanupFailure),
+            searchWithClaude(installation, { query: "query" }, { supervise: supervisorWithCleanupFailure }),
             /malformed JSONL; Claude Code process tree cleanup failed: synthetic search process-group EPERM/,
         );
         const metrics = getLastSearchMetrics();
@@ -155,7 +203,7 @@ test("web search fails closed on missing, duplicate, and unexpected initializati
         const fake = await fakeSearch(entry.body);
         try {
             const installation = { executable: fake.executable, version: "test", subscriptionType: "pro" };
-            await assert.rejects(searchWithClaude(installation, "query", undefined, undefined), entry.pattern);
+            await assert.rejects(searchWithClaude(installation, { query: "query" }), entry.pattern);
         }
         finally {
             await rm(fake.directory, { recursive: true, force: true });
@@ -165,7 +213,7 @@ test("web search fails closed on missing, duplicate, and unexpected initializati
 
 test("web search rejects oversized requests before launch", async () => {
     const installation = { executable: "/does/not/matter", version: "test", subscriptionType: "pro" };
-    await assert.rejects(searchWithClaude(installation, "x".repeat(64 * 1024 + 1), undefined, undefined), /65536-byte limit/);
+    await assert.rejects(searchWithClaude(installation, { query: "x".repeat(64 * 1024 + 1) }), /65536-byte limit/);
     assert.equal(getLastSearchMetrics().errorCategory, "request_too_large");
     assert.equal(getLastSearchMetrics().cleanupComplete, true);
 });
@@ -176,7 +224,7 @@ test("web search rejects malformed and oversized responses and cleans its cwd", 
     await writeFile(malformed.executable, source.replace(JSON.stringify("MARKER"), JSON.stringify(marker)), { mode: 0o700 });
     try {
         const installation = { executable: malformed.executable, version: "test", subscriptionType: "pro" };
-        await assert.rejects(searchWithClaude(installation, "query", undefined, undefined), /malformed JSONL/);
+        await assert.rejects(searchWithClaude(installation, { query: "query" }), /malformed JSONL/);
         await assert.rejects(access(await readFile(marker, "utf8")));
     }
     finally {
@@ -185,7 +233,7 @@ test("web search rejects malformed and oversized responses and cleans its cwd", 
     const oversized = await fakeSearch(`process.stdout.write("x".repeat(2 * 1024 * 1024 + 1));`);
     try {
         const installation = { executable: oversized.executable, version: "test", subscriptionType: "pro" };
-        await assert.rejects(searchWithClaude(installation, "query", undefined, undefined), /maximum captured response size/);
+        await assert.rejects(searchWithClaude(installation, { query: "query" }), /maximum captured response size/);
     }
     finally {
         await rm(oversized.directory, { recursive: true, force: true });
@@ -201,7 +249,7 @@ test("web search preserves primary failures when private cleanup also fails", as
     try {
         const installation = { executable: malformed.executable, version: "test", subscriptionType: "pro" };
         await assert.rejects(
-            searchWithClaude(installation, "query", undefined, undefined, undefined, failCleanup),
+            searchWithClaude(installation, { query: "query" }, { cleanupDirectory: failCleanup }),
             /malformed JSONL; private web-search request cleanup failed: synthetic cleanup failure/,
         );
         const metrics = getLastSearchMetrics();
@@ -225,7 +273,7 @@ process.stdout.write(JSON.stringify({type:"result",is_error:false,result:"must n
     try {
         const installation = { executable: successful.executable, version: "test", subscriptionType: "pro" };
         await assert.rejects(
-            searchWithClaude(installation, "query", undefined, undefined, undefined, failCleanup),
+            searchWithClaude(installation, { query: "query" }, { cleanupDirectory: failCleanup }),
             /private web-search request cleanup failed: synthetic cleanup failure/,
         );
         const metrics = getLastSearchMetrics();
@@ -247,7 +295,11 @@ setInterval(() => {}, 1000);`);
     const controller = new AbortController();
     let pending;
     try {
-        pending = searchWithClaude({ executable: hanging.executable, version: "test", subscriptionType: "pro" }, "query", undefined, controller.signal, 1000);
+        pending = searchWithClaude(
+            { executable: hanging.executable, version: "test", subscriptionType: "pro" },
+            { query: "query", signal: controller.signal },
+            { timeoutMs: 1000 },
+        );
         const pidPath = join(hanging.directory, "pid");
         for (let attempt = 0; attempt < 100; attempt++) {
             try { await access(pidPath); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
@@ -277,7 +329,10 @@ fs.writeFileSync(path.join(__dirname, "spawned"), "spawned");`);
         const cancelledBeforeLaunch = new AbortController();
         cancelledBeforeLaunch.abort();
         await assert.rejects(
-            searchWithClaude({ executable: preCancelled.executable, version: "test", subscriptionType: "pro" }, "query", undefined, cancelledBeforeLaunch.signal),
+            searchWithClaude(
+                { executable: preCancelled.executable, version: "test", subscriptionType: "pro" },
+                { query: "query", signal: cancelledBeforeLaunch.signal },
+            ),
             /cancelled/,
         );
         await assert.rejects(access(join(preCancelled.directory, "spawned")));
@@ -286,10 +341,10 @@ fs.writeFileSync(path.join(__dirname, "spawned"), "spawned");`);
         assert.equal(preLaunchMetrics.cleanupComplete, true);
 
         const controller = new AbortController();
-        const aborted = searchWithClaude(installation, "query", undefined, controller.signal, 1000);
+        const aborted = searchWithClaude(installation, { query: "query", signal: controller.signal }, { timeoutMs: 1000 });
         setTimeout(() => controller.abort(), 20);
         await assert.rejects(aborted, /cancelled/);
-        await assert.rejects(searchWithClaude(installation, "query", undefined, undefined, 30), /no protocol activity for 30ms|exceeded 30ms/);
+        await assert.rejects(searchWithClaude(installation, { query: "query" }, { timeoutMs: 30 }), /no protocol activity for 30ms|exceeded 30ms/);
     }
     finally {
         await rm(preCancelled.directory, { recursive: true, force: true });

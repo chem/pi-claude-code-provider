@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Type } from "typebox";
 import { prepareRequest, prepareRequestWithLimits } from "../../src/context-serializer.ts";
-import { needsBunConfig } from "../../src/process-utils.ts";
+import { needsBunConfig } from "../../src/host-runtime.ts";
 
 const transcript = (prepared) => prepared.transcriptBlocks.join("\n");
 

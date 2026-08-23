@@ -10,16 +10,17 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { buildClaudeEnvironment, claudeLaunch } from "./auth.ts";
-import { bridgeCommand, providerArgs } from "./claude-args.ts";
+import { bridgeArgv, formatBridgeArgv, providerArgs } from "./claude-args.ts";
 import { MAX_SYSTEM_PROMPT_BYTES, prepareRequest } from "./context-serializer.ts";
 import { appendCleanupFailure, ClaudeCodeError, errorText } from "./errors.ts";
 import { JsonlParser } from "./jsonl.ts";
 import { recordRequestMetrics } from "./metrics.ts";
 import { createOutput } from "./output.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
-import { superviseProcess, terminateProcessGroup, type ProcessSupervisor } from "./process-utils.ts";
+import { ProcessTerminationError, superviseProcess, terminateProcessGroup, type ProcessSupervisor } from "./process-utils.ts";
 import { recordRuntimeChild, removeRuntimeDirectory } from "./runtime-directories.ts";
-import { ClaudeEventMapper, type ClaudeTerminationCause, type RateLimitNoticeSink } from "./stream-events.ts";
+import type { RateLimitNoticeSink } from "./claude-protocol.ts";
+import { ClaudeEventMapper, type ClaudeTerminationCause } from "./stream-events.ts";
 import type { ClaudeInstallation, LogicalProviderPayload, MutableOutput, RequestMetrics } from "./types.ts";
 
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -35,12 +36,21 @@ type CleanupDirectory = (directory: string) => Promise<void>;
 /** Internal dependency seam for deterministic abort-timing tests. */
 type ClaimLaunch = () => Promise<void>;
 
+export interface ClaudeStreamDependencies {
+  cleanupDirectory?: CleanupDirectory;
+  onRateLimitNotice?: RateLimitNoticeSink;
+  claimLaunch?: ClaimLaunch;
+  supervise?: typeof superviseProcess;
+}
+
 export function createClaudeStream(
   installation: ClaudeInstallation,
-  cleanupDirectory: CleanupDirectory = removeRuntimeDirectory,
-  onRateLimitNotice?: RateLimitNoticeSink,
-  claimLaunch: ClaimLaunch = claimPaidTestLaunch,
+  dependencies: ClaudeStreamDependencies = {},
 ) {
+  const cleanupDirectory = dependencies.cleanupDirectory ?? removeRuntimeDirectory;
+  const onRateLimitNotice = dependencies.onRateLimitNotice;
+  const claimLaunch = dependencies.claimLaunch ?? claimPaidTestLaunch;
+  const supervise = dependencies.supervise ?? superviseProcess;
   return (model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream => {
     const stream = createAssistantMessageEventStream();
     const output = createOutput(model);
@@ -60,6 +70,8 @@ export function createClaudeStream(
       let exitSignal: NodeJS.Signals | null | undefined;
       let errorCategory: string | undefined;
       let terminationFailure: unknown;
+      let processLivenessUnknown = false;
+      let finalized = false;
       const metrics: RequestMetrics = {
         schemaVersion: 4,
         timestamp: new Date(startedAt).toISOString(),
@@ -86,7 +98,7 @@ export function createClaudeStream(
       };
 
       const cleanupPrepared = async (): Promise<void> => {
-        if (!prepared) return;
+        if (!prepared || processLivenessUnknown) return;
         const current = prepared;
         await cleanupDirectory(current.directory);
         metrics.cleanupComplete = true;
@@ -143,6 +155,34 @@ export function createClaudeStream(
         terminateInBackground();
       };
 
+      const finalizeLifecycle = async (): Promise<void> => {
+        if (finalized) return;
+        finalized = true;
+        if (abortHandler) options?.signal?.removeEventListener("abort", abortHandler);
+        supervisor?.dispose();
+        try {
+          await cleanupPrepared();
+        } catch {
+          errorCategory ??= "cleanup";
+        }
+        metrics.durationMs = Date.now() - startedAt;
+        metrics.resolvedModel = output.responseModel;
+        metrics.servedContextWindow = mapper?.contextWindow;
+        metrics.servedMaxOutputTokens = mapper?.maxOutputTokens;
+        metrics.cacheRead = output.usage.cacheRead;
+        metrics.cacheWrite = output.usage.cacheWrite;
+        metrics.inputTokens = output.usage.input;
+        metrics.outputTokens = output.usage.output;
+        const promptTokens = metrics.inputTokens + metrics.cacheRead + metrics.cacheWrite;
+        metrics.cacheHitPercent = promptTokens > 0 ? Math.round((metrics.cacheRead * 10_000) / promptTokens) / 100 : undefined;
+        metrics.stopReason = output.stopReason;
+        metrics.errorCategory =
+          errorCategory ?? (mapper?.rateLimitFailure ? "rate_limit" : output.stopReason === "error" ? "claude_error" : undefined);
+        metrics.exitCode = exitCode;
+        metrics.exitSignal = exitSignal;
+        recordRequestMetrics(metrics);
+      };
+
       try {
         const effectiveContext = await applyPayloadHook(model, context, options);
         metrics.lastPhase = "payload_applied";
@@ -169,18 +209,20 @@ export function createClaudeStream(
         metrics.catalogBytes = prepared.catalogBytes;
         metrics.imageBytes = prepared.imageBytes;
         metrics.estimatedInputTokens = estimatedInputTokens;
-        validateContextBudget(model, estimatedInputTokens);
+        const maxOutputTokens = effectiveMaxOutputTokens(model, options?.maxTokens);
+        validateContextBudget(model, estimatedInputTokens, maxOutputTokens);
         const { args, prompt } = providerArgs(prepared, model.id, effort);
         const expectedTools = new Set(prepared.toolNames.keys());
-        mapper = new ClaudeEventMapper(
+        mapper = new ClaudeEventMapper({
           stream,
           output,
           expectedTools,
-          prepared.toolNames,
-          stopForToolUse,
+          toolNames: prepared.toolNames,
+          onToolUse: stopForToolUse,
           onRateLimitNotice,
-          announceResponse,
-        );
+          onResponseAnnouncement: announceResponse,
+          privatePaths: [prepared.directory],
+        });
 
         // Configuration must fail before a paid budget slot is claimed or a
         // Claude process is spawned.
@@ -218,6 +260,7 @@ export function createClaudeStream(
           cwd: prepared.directory,
           env: buildClaudeEnvironment({
             ...launch.env,
+            CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutputTokens),
             ...(prepared.catalogPath ? { PI_CLAUDE_TOOL_CATALOG: prepared.catalogPath } : {}),
           }),
           detached: process.platform !== "win32",
@@ -225,11 +268,12 @@ export function createClaudeStream(
           stdio: ["pipe", "pipe", "pipe"],
         });
         metrics.lastPhase = "spawned";
-        supervisor = superviseProcess(child, {
+        supervisor = supervise(child, {
           idleTimeoutMs,
           totalTimeoutMs,
           onFailure(error) {
-            errorCategory ??= "process";
+            if (error instanceof ProcessTerminationError) errorCategory = "process_cleanup";
+            else errorCategory ??= "process";
             mapper?.fail(error.message, options?.signal?.aborted === true);
           },
         });
@@ -299,7 +343,7 @@ export function createClaudeStream(
 
         if (prepared.readyPath) {
           await waitForReadyOrExit(prepared.readyPath, readyTimeoutMs, options?.signal, supervisor.wait(), {
-            bridgeCommand: bridgeCommand(prepared.bunConfigPath),
+            bridgeArgv: bridgeArgv(prepared.bunConfigPath),
             stderr: () => stderr,
           });
           metrics.lastPhase = "mcp_ready";
@@ -371,7 +415,10 @@ export function createClaudeStream(
           );
         }
       } catch (error) {
-        errorCategory ??= error instanceof ClaudeCodeError
+        if (error instanceof ProcessTerminationError) {
+          processLivenessUnknown = true;
+          errorCategory = "process_cleanup";
+        } else errorCategory ??= error instanceof ClaudeCodeError
           ? error.code
           : options?.signal?.aborted
             ? "aborted"
@@ -379,11 +426,17 @@ export function createClaudeStream(
               ? "process_cleanup"
               : "provider";
         let failure = errorText(error);
-        try {
-          await terminateCurrent();
-        } catch (terminationError) {
-          if (terminationError !== error) {
-            failure = appendCleanupFailure(failure, "Claude Code process tree", terminationError);
+        if (error instanceof ProcessTerminationError) {
+          failure += "; provider-private runtime state was retained because process death could not be established";
+        }
+        if (!(error instanceof ProcessTerminationError)) {
+          try {
+            await terminateCurrent();
+          } catch (terminationError) {
+            if (terminationError instanceof ProcessTerminationError) processLivenessUnknown = true;
+            if (terminationError !== error) {
+              failure = appendCleanupFailure(failure, "Claude Code process tree", terminationError);
+            }
           }
         }
         try {
@@ -392,7 +445,10 @@ export function createClaudeStream(
           errorCategory ??= "cleanup";
           failure = appendCleanupFailure(failure, "private request", cleanupError);
         }
-        if (mapper) mapper.fail(failure, options?.signal?.aborted === true);
+        if (mapper) {
+          if (mapper.isTerminal) output.errorMessage = failure;
+          else mapper.fail(failure, options?.signal?.aborted === true);
+        }
         else {
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = failure;
@@ -400,31 +456,7 @@ export function createClaudeStream(
           stream.end();
         }
       } finally {
-        if (abortHandler) options?.signal?.removeEventListener("abort", abortHandler);
-        supervisor?.dispose();
-        try {
-          await cleanupPrepared();
-        } catch {
-          errorCategory ??= "cleanup";
-        } finally {
-          metrics.durationMs = Date.now() - startedAt;
-          metrics.resolvedModel = output.responseModel;
-          metrics.servedContextWindow = mapper?.contextWindow;
-          metrics.servedMaxOutputTokens = mapper?.maxOutputTokens;
-          metrics.cacheRead = output.usage.cacheRead;
-          metrics.cacheWrite = output.usage.cacheWrite;
-          metrics.inputTokens = output.usage.input;
-          metrics.outputTokens = output.usage.output;
-          // Cache-hit percentage is the cache-read share of Claude's complete reported prompt usage.
-          const promptTokens = metrics.inputTokens + metrics.cacheRead + metrics.cacheWrite;
-          metrics.cacheHitPercent = promptTokens > 0 ? Math.round((metrics.cacheRead * 10_000) / promptTokens) / 100 : undefined;
-          metrics.stopReason = output.stopReason;
-          metrics.errorCategory =
-            errorCategory ?? (mapper?.rateLimitFailure ? "rate_limit" : output.stopReason === "error" ? "claude_error" : undefined);
-          metrics.exitCode = exitCode;
-          metrics.exitSignal = exitSignal;
-          recordRequestMetrics(metrics);
-        }
+        await finalizeLifecycle();
       }
     })();
 
@@ -466,9 +498,16 @@ function estimateTransportTokens(transcriptBytes: number, catalogBytes: number, 
   return Math.ceil(textTokens * 1.1) + images * 2_000;
 }
 
-function validateContextBudget(model: Model<Api>, estimatedInputTokens: number): void {
+function effectiveMaxOutputTokens(model: Model<Api>, requested: number | undefined): number {
+  const value = requested ?? model.maxTokens;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ClaudeCodeError("max_tokens", "Pi maxTokens must be a positive integer");
+  }
+  return Math.min(value, model.maxTokens);
+}
+
+function validateContextBudget(model: Model<Api>, estimatedInputTokens: number, maxOutput: number): void {
   const contextWindow = model.contextWindow ?? 0;
-  const maxOutput = model.maxTokens ?? 0;
   if (contextWindow > 0 && estimatedInputTokens + maxOutput > contextWindow) {
     throw new ClaudeCodeError(
       "context_budget",
@@ -479,8 +518,7 @@ function validateContextBudget(model: Model<Api>, estimatedInputTokens: number):
 
 /** Evidence carried into a readiness failure, gathered only when one occurs. */
 export interface ReadyDiagnostics {
-  /** The exact command Claude Code was told to launch for the bridge. */
-  bridgeCommand?: string;
+  bridgeArgv?: readonly string[];
   /** Claude Code's stderr so far, read lazily so a healthy request pays nothing. */
   stderr?: () => string;
 }
@@ -494,12 +532,15 @@ export async function waitForReadyOrExit(
   diagnostics: ReadyDiagnostics = {},
 ): Promise<void> {
   let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  void processResult.then((result) => {
-    exited = result;
-  });
+  let processError: unknown;
+  void processResult.then(
+    (result) => { exited = result; },
+    (error) => { processError = error; },
+  );
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new ClaudeCodeError("aborted", "Claude Code request was aborted");
+    if (processError) throw processError;
     if (exited) {
       throw new ClaudeCodeError(
         "mcp_startup",
@@ -525,8 +566,8 @@ export async function waitForReadyOrExit(
  * at timeout, so carry it rather than leaving the duration to speak alone.
  */
 function readyDiagnosticSuffix(diagnostics: ReadyDiagnostics): string {
-  const command = diagnostics.bridgeCommand
-    ? `; Claude Code was told to launch it as: ${diagnostics.bridgeCommand}`
+  const command = diagnostics.bridgeArgv
+    ? `; Claude Code was told to launch argv: ${formatBridgeArgv(diagnostics.bridgeArgv)}`
     : "";
   const captured = diagnostics.stderr?.().trim() ?? "";
   const stderr = captured ? `; Claude Code stderr: ${captured.slice(-READY_STDERR_BYTES)}` : "";
@@ -556,18 +597,20 @@ function containsPrivateTransportPath(value: unknown, directory: string): boolea
 }
 
 async function applyPayloadHook(model: Model<Api>, context: Context, options?: SimpleStreamOptions): Promise<Context> {
-  if (!options?.onPayload) return context;
   const logical: LogicalProviderPayload = {
     systemPrompt: context.systemPrompt,
     messages: context.messages,
     tools: context.tools,
   };
-  const replacement = await options.onPayload(logical, model);
-  if (replacement === undefined) return context;
-  if (!replacement || typeof replacement !== "object") {
+  const replacement = await options?.onPayload?.(logical, model);
+  return validateLogicalPayload(replacement === undefined ? logical : replacement);
+}
+
+function validateLogicalPayload(value: unknown): Context {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new ClaudeCodeError("payload_invalid", "before_provider_request returned an invalid logical payload");
   }
-  const payload = replacement as Partial<LogicalProviderPayload>;
+  const payload = value as Partial<LogicalProviderPayload>;
   if (!Array.isArray(payload.messages)) {
     throw new ClaudeCodeError("payload_invalid", "Logical provider payload must contain a messages array");
   }
@@ -577,5 +620,81 @@ async function applyPayloadHook(model: Model<Api>, context: Context, options?: S
   if (payload.systemPrompt !== undefined && typeof payload.systemPrompt !== "string") {
     throw new ClaudeCodeError("payload_invalid", "Logical provider systemPrompt must be a string");
   }
+  for (const message of payload.messages as unknown[]) validateLogicalMessage(message);
+  for (const tool of (payload.tools ?? []) as unknown[]) validateLogicalTool(tool);
   return { systemPrompt: payload.systemPrompt, messages: payload.messages, tools: payload.tools };
+}
+
+function validateLogicalMessage(value: unknown): void {
+  const message = logicalObject(value, "message");
+  if (message.role === "user") {
+    if (typeof message.content === "string") return;
+    validateContent(message.content, new Set(["text", "image"]), "user");
+    return;
+  }
+  if (message.role === "assistant") {
+    validateContent(message.content, new Set(["text", "thinking", "toolCall"]), "assistant");
+    return;
+  }
+  if (message.role === "toolResult") {
+    nonemptyString(message.toolCallId, "tool-result ID");
+    nonemptyString(message.toolName, "tool-result name");
+    if (typeof message.isError !== "boolean") invalidPayload("Tool-result isError must be boolean");
+    validateContent(message.content, new Set(["text", "image"]), "toolResult");
+    return;
+  }
+  invalidPayload(`Unsupported logical message role: ${String(message.role)}`);
+}
+
+function validateContent(value: unknown, allowed: ReadonlySet<string>, role: string): void {
+  if (!Array.isArray(value)) invalidPayload(`Logical ${role} content must be an array`);
+  for (const valueBlock of value) {
+    const block = logicalObject(valueBlock, `${role} content block`);
+    if (typeof block.type !== "string" || !allowed.has(block.type)) {
+      invalidPayload(`Unsupported logical ${role} content block: ${String(block.type)}`);
+    }
+    if (block.type === "text") {
+      if (typeof block.text !== "string") invalidPayload("Logical text content must contain text");
+    } else if (block.type === "thinking") {
+      if (typeof block.thinking !== "string") invalidPayload("Logical thinking content must contain thinking");
+      if (block.redacted !== undefined && typeof block.redacted !== "boolean") invalidPayload("Logical thinking redacted must be boolean");
+    } else if (block.type === "toolCall") {
+      nonemptyString(block.id, "tool-call ID");
+      nonemptyString(block.name, "tool-call name");
+      serializableObject(block.arguments, "tool-call arguments");
+    } else if (block.type === "image") {
+      if (typeof block.data !== "string" || typeof block.mimeType !== "string") {
+        invalidPayload("Logical image content must contain string data and mimeType");
+      }
+    }
+  }
+}
+
+function validateLogicalTool(value: unknown): void {
+  const tool = logicalObject(value, "tool");
+  nonemptyString(tool.name, "tool name");
+  if (typeof tool.description !== "string") invalidPayload("Logical tool description must be a string");
+  serializableObject(tool.parameters, "tool schema");
+}
+
+function logicalObject(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) invalidPayload(`Logical ${label} must be an object`);
+  return value as Record<string, unknown>;
+}
+
+function nonemptyString(value: unknown, label: string): void {
+  if (typeof value !== "string" || !value.trim()) invalidPayload(`Logical ${label} must be a nonempty string`);
+}
+
+function serializableObject(value: unknown, label: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) invalidPayload(`Logical ${label} must be an object`);
+  try {
+    if (typeof JSON.stringify(value) !== "string") invalidPayload(`Logical ${label} must be JSON-serializable`);
+  } catch {
+    invalidPayload(`Logical ${label} must be JSON-serializable`);
+  }
+}
+
+function invalidPayload(message: string): never {
+  throw new ClaudeCodeError("payload_invalid", message);
 }

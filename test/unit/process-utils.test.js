@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
+import { ProcessTerminationError, superviseProcess, terminateProcessGroup } from "../../src/process-utils.ts";
 import { nodeFixtureArgs } from "../support/node-fixture.js";
 
 async function assertProcessGone(pid) {
@@ -46,6 +46,34 @@ test("supervisor reports only the first pipe failure", async () => {
     await supervisor.wait();
     supervisor.dispose();
     assert.deepEqual(failures, ["Claude Code stdin failed: EPIPE"]);
+});
+test("supervisor rejects and quiesces when termination cannot establish process death", { skip: process.platform === "win32" }, async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const failures = [];
+    const supervisor = superviseProcess(child, {
+        idleTimeoutMs: 1_000,
+        totalTimeoutMs: 30,
+        onFailure(error) { failures.push(error); },
+        terminate: async () => { throw new Error("synthetic terminator EPERM"); },
+    });
+    try {
+        await assert.rejects(
+            Promise.race([
+                supervisor.wait(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("supervisor did not settle")), 500)),
+            ]),
+            (error) => error instanceof ProcessTerminationError && /liveness is unknown.*EPERM/.test(error.message),
+        );
+        assert.equal(failures.length, 2);
+        assert.match(failures[0].message, /exceeded 30ms/);
+        assert.ok(failures[1] instanceof ProcessTerminationError);
+        assert.equal(child.stdout.destroyed, true);
+        assert.equal(child.stderr.destroyed, true);
+        assert.doesNotThrow(() => process.kill(child.pid, 0));
+    } finally {
+        supervisor.dispose();
+        await terminateProcessGroup(child);
+    }
 });
 test("Windows termination removes only the exact owned process tree", { skip: process.platform !== "win32" }, async () => {
     // PID-reporting children use the preload because restricted sandboxes can

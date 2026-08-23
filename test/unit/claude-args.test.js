@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BRIDGE_PATH, providerArgs } from "../../src/claude-args.ts";
-import { NEUTRAL_BUN_CONFIG, needsBunConfig, scriptLaunch } from "../../src/process-utils.ts";
+import { BRIDGE_PATH, baseClaudeArgs, providerArgs } from "../../src/claude-args.ts";
+import { NEUTRAL_BUN_CONFIG, needsBunConfig, scriptLaunch } from "../../src/host-runtime.ts";
 test("uses only generated attachment references and replacement prompt", () => {
     const prepared = {
         directory: "/tmp/private",
@@ -29,6 +29,28 @@ test("uses only generated attachment references and replacement prompt", () => {
     assert.ok(args.includes("--no-session-persistence"));
     assert.ok(args.includes("dontAsk"));
     assert.ok(args.includes(""));
+});
+
+test("pins cache-stable Claude settings and omits fixed outer guidance", () => {
+    const args = baseClaudeArgs();
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.deepEqual(settings, {
+        disableAllHooks: true,
+        autoMemoryEnabled: false,
+        totalTokensReminder: "off",
+    });
+    const prepared = {
+        directory: "/tmp/private",
+        transcriptBlocks: ['{"protocol":"test"}'],
+        attachmentPaths: [],
+        systemPromptPath: "/tmp/private/system-prompt.txt",
+        toolNames: new Map(),
+        transcriptBytes: 1,
+        catalogBytes: 0,
+        imageBytes: 0,
+    };
+    const generated = providerArgs(prepared, "sonnet", "low");
+    assert.deepEqual(generated.prompt, [{ type: "text", text: prepared.transcriptBlocks[0] }]);
 });
 
 test("proposal MCP server launches the bridge through the hosting runtime", () => {

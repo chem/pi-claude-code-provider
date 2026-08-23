@@ -3,15 +3,16 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeEnvironment } from "./auth.ts";
-import { bridgeCommand, bridgeLaunch } from "./claude-args.ts";
+import { bridgeArgv, bridgeLaunch, formatBridgeArgv } from "./claude-args.ts";
 import type { VersionStatus } from "./compatibility.ts";
-import { NEUTRAL_BUN_CONFIG, hostRuntimeDescription, needsBunConfig, superviseProcess } from "./process-utils.ts";
+import { NEUTRAL_BUN_CONFIG, hostRuntimeDescription, needsBunConfig } from "./host-runtime.ts";
+import { superviseProcess } from "./process-utils.ts";
 import type { RuntimeCleanupResult } from "./runtime-directories.ts";
 import type { ClaudeInstallation, RequestMetrics } from "./types.ts";
 
 export interface BridgeProbeResult {
   ok: boolean;
-  command: string;
+  argv: string[];
   detail: string;
 }
 
@@ -31,7 +32,7 @@ export async function probeBridge(timeoutMs = 10_000): Promise<BridgeProbeResult
       await writeFile(bunConfigPath, NEUTRAL_BUN_CONFIG, { mode: 0o600 });
     }
     const launch = bridgeLaunch(bunConfigPath);
-    const command = bridgeCommand(bunConfigPath);
+    const argv = bridgeArgv(bunConfigPath);
     await writeFile(catalogPath, JSON.stringify([{ name: "probe", description: "doctor probe", inputSchema: { type: "object" } }]), { mode: 0o600 });
     const child = spawn(launch.command, launch.args, {
       cwd: directory,
@@ -88,11 +89,11 @@ export async function probeBridge(timeoutMs = 10_000): Promise<BridgeProbeResult
       const cause = failure ?? stderr.trim();
       return {
         ok: false,
-        command,
+        argv,
         detail: `handshake failed (${Array.isArray(tools) ? `${tools.length} tools` : "no tools/list result"}, ready marker ${ready ? "written" : "missing"})${cause ? `: ${cause.slice(0, 256)}` : ""}`,
       };
     }
-    return { ok: true, command, detail: "handshake completed: 1 tool listed, ready marker written" };
+    return { ok: true, argv, detail: "handshake completed: 1 tool listed, ready marker written" };
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -124,14 +125,14 @@ export function formatDoctorSummary(input: DoctorSummaryInput): string {
       ? `reported usage: ${metrics.inputTokens} input, ${metrics.cacheRead} cache read, ${metrics.cacheWrite} cache write${metrics.cacheHitPercent === undefined ? "" : `, ${metrics.cacheHitPercent}% cache hit`}`
       : "reported token usage unavailable";
   const requestSummary = metrics
-    ? `; last request: ${metrics.requestedModel}/${metrics.effort}, ${metrics.messageCount} messages, ${metrics.estimatedInputTokens} estimated transport tokens, ${reportedUsage}, ${metrics.durationMs ?? 0}ms, ${metrics.stopReason ?? "unknown"}${metrics.errorCategory ? ` (${metrics.errorCategory})` : ""}`
+    ? `; last request: ${metrics.requestedModel}/${metrics.effort}, ${metrics.messageCount} messages, ${metrics.estimatedInputTokens} estimated transport tokens, ${reportedUsage}, ${metrics.durationMs ?? 0}ms, ${metrics.stopReason ?? "unknown"}${metrics.errorCategory ? ` (${metrics.errorCategory})` : ""}${metrics.cleanupComplete ? "" : ", cleanup incomplete"}`
     : "; no request metrics recorded yet";
   const metricsLogSummary = input.metricsLogError ? `; metrics log error: ${input.metricsLogError}` : "";
   const cleanupSummary = input.runtimeCleanup.removed > 0 || input.runtimeCleanup.failures > 0
     ? `; stale runtime cleanup: ${input.runtimeCleanup.removed} removed, ${input.runtimeCleanup.failures} ${input.runtimeCleanup.failures === 1 ? "failure" : "failures"}`
     : "";
   const bridgeSummary = input.bridgeProbe
-    ? `; bridge ${input.bridgeProbe.ok ? "ok" : "BROKEN"} via ${input.bridgeProbe.command} (${input.bridgeProbe.detail})`
+    ? `; bridge ${input.bridgeProbe.ok ? "ok" : "BROKEN"} via ${formatBridgeArgv(input.bridgeProbe.argv)} (${input.bridgeProbe.detail})`
     : "";
   return `${verification}; runtime ${hostRuntimeDescription()}; Claude at ${input.installation.executable}; ${input.installation.subscriptionType} subscription; models: ${input.modelIds.join(", ")}${bridgeSummary}${requestSummary}${metricsLogSummary}${cleanupSummary}`;
 }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { VersionStatus } from "./compatibility.ts";
 import { ClaudeCodeError } from "./errors.ts";
-import { hostRuntimeDescription } from "./process-utils.ts";
+import { hostRuntimeDescription } from "./host-runtime.ts";
 import type { BridgeProbeResult } from "./doctor.ts";
 import type { RuntimeCleanupResult } from "./runtime-directories.ts";
 import type { ClaudeInstallation, RequestMetrics, SearchMetrics } from "./types.ts";
@@ -37,7 +37,7 @@ export async function writeDiagnosticReport(input: DiagnosticReportInput): Promi
     probe("/usr/bin/getconf", ["ARG_MAX"]),
   ]);
   const report = {
-    schema: "pi-claude-code-provider-diagnostics-v1",
+    schema: "pi-claude-code-provider-diagnostics-v2",
     generatedAt: new Date().toISOString(),
     system: {
       platform: process.platform,
@@ -75,7 +75,7 @@ export async function writeDiagnosticReport(input: DiagnosticReportInput): Promi
     bridge: input.bridgeProbe
       ? {
           ok: input.bridgeProbe.ok,
-          command: sanitize(input.bridgeProbe.command, lexicalTempRoot, physicalTempRoot),
+          argv: input.bridgeProbe.argv.map((argument) => sanitize(argument, lexicalTempRoot, physicalTempRoot)),
           detail: sanitize(input.bridgeProbe.detail, lexicalTempRoot, physicalTempRoot),
         }
       : undefined,

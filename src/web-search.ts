@@ -9,9 +9,9 @@ import { appendCleanupFailure, ClaudeCodeError, errorText } from "./errors.ts";
 import { JsonlParser } from "./jsonl.ts";
 import { recordSearchMetrics } from "./metrics.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
-import { superviseProcess, type ProcessSupervisor } from "./process-utils.ts";
+import { ProcessTerminationError, superviseProcess, type ProcessSupervisor } from "./process-utils.ts";
 import { createRuntimeDirectory, recordRuntimeChild, removeRuntimeDirectory } from "./runtime-directories.ts";
-import { parseRateLimitNotice, type RateLimitNoticeSink, validateClaudeInitialization } from "./stream-events.ts";
+import { parseRateLimitNotice, terminalResultErrorDetail, type RateLimitNoticeSink, validateClaudeInitialization } from "./claude-protocol.ts";
 
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -19,16 +19,29 @@ const SEARCH_TIMEOUT_MS = 180_000;
 /** Internal dependency seam for deterministic cleanup-failure tests. */
 type CleanupDirectory = (directory: string) => Promise<void>;
 
+export interface ClaudeSearchRequest {
+  query: string;
+  focus?: string;
+  signal?: AbortSignal;
+}
+
+export interface ClaudeSearchDependencies {
+  timeoutMs?: number;
+  cleanupDirectory?: CleanupDirectory;
+  supervise?: typeof superviseProcess;
+  onRateLimitNotice?: RateLimitNoticeSink;
+}
+
 export async function searchWithClaude(
   installation: ClaudeInstallation,
-  query: string,
-  focus: string | undefined,
-  signal: AbortSignal | undefined,
-  timeoutMs = SEARCH_TIMEOUT_MS,
-  cleanupDirectory: CleanupDirectory = removeRuntimeDirectory,
-  supervise: typeof superviseProcess = superviseProcess,
-  onRateLimitNotice: RateLimitNoticeSink = () => {},
+  request: ClaudeSearchRequest,
+  dependencies: ClaudeSearchDependencies = {},
 ): Promise<string> {
+  const { query, focus, signal } = request;
+  const timeoutMs = dependencies.timeoutMs ?? SEARCH_TIMEOUT_MS;
+  const cleanupDirectory = dependencies.cleanupDirectory ?? removeRuntimeDirectory;
+  const supervise = dependencies.supervise ?? superviseProcess;
+  const onRateLimitNotice = dependencies.onRateLimitNotice ?? (() => {});
   const startedAt = Date.now();
   const requestBytes = Buffer.byteLength(query) + Buffer.byteLength(focus ?? "");
   const metrics: SearchMetrics = {
@@ -59,6 +72,7 @@ export async function searchWithClaude(
   let processFailure: Error | undefined;
   let primaryFailure: string | undefined;
   let terminationFailure: unknown;
+  let processLivenessUnknown = false;
   let oversized = false;
   let protocol: SearchProtocol | undefined;
   const terminateCurrent = async (): Promise<void> => {
@@ -146,6 +160,7 @@ export async function searchWithClaude(
         metrics.lastPhase = phase;
       },
       onRateLimitNotice,
+      [directory],
     );
     protocol = currentProtocol;
     let stderr = "";
@@ -207,12 +222,18 @@ export async function searchWithClaude(
     metrics.lastPhase = "completed";
     return result;
   } catch (error) {
-    metrics.errorCategory ??= signal?.aborted
+    if (error instanceof ProcessTerminationError) {
+      processLivenessUnknown = true;
+      metrics.errorCategory = "process_cleanup";
+    } else metrics.errorCategory ??= signal?.aborted
       ? "aborted"
       : error === terminationFailure
         ? "process_cleanup"
         : searchErrorCategory(error, oversized);
     primaryFailure = signal?.aborted ? "Web search was cancelled" : errorText(error);
+    if (error instanceof ProcessTerminationError) {
+      primaryFailure += "; private web-search runtime state was retained because process death could not be established";
+    }
     try {
       await terminateCurrent();
     } catch (terminationError) {
@@ -225,8 +246,8 @@ export async function searchWithClaude(
     if (abortHandler) signal?.removeEventListener("abort", abortHandler);
     supervisor?.dispose();
     try {
-      if (directory) await cleanupDirectory(directory);
-      metrics.cleanupComplete = true;
+      if (directory && !processLivenessUnknown) await cleanupDirectory(directory);
+      metrics.cleanupComplete = !processLivenessUnknown;
     } catch (error) {
       metrics.errorCategory ??= "cleanup";
       throw new Error(appendCleanupFailure(primaryFailure, "private web-search request", error));
@@ -244,10 +265,16 @@ class SearchProtocol {
   private rateLimitFailure: string | undefined;
   private readonly onPhase: ((phase: string) => void) | undefined;
   private readonly onRateLimitNotice: RateLimitNoticeSink;
+  private readonly privatePaths: readonly string[];
 
-  constructor(onPhase?: (phase: string) => void, onRateLimitNotice: RateLimitNoticeSink = () => {}) {
+  constructor(
+    onPhase?: (phase: string) => void,
+    onRateLimitNotice: RateLimitNoticeSink = () => {},
+    privatePaths: readonly string[] = [],
+  ) {
     this.onPhase = onPhase;
     this.onRateLimitNotice = onRateLimitNotice;
+    this.privatePaths = privatePaths;
   }
 
   get isInitialized(): boolean {
@@ -264,6 +291,7 @@ class SearchProtocol {
       validateClaudeInitialization(record, {
         tools: new Set(["WebFetch", "WebSearch"]),
         mcpServer: "none",
+        privatePaths: this.privatePaths,
       });
       this.initialized = true;
       this.onPhase?.("initialized");
@@ -308,19 +336,10 @@ class SearchProtocol {
     if (!this.initialized) throw new ClaudeCodeError("protocol_init", "Claude web search omitted initialization");
     if (!this.resultRecord) throw new ClaudeCodeError("protocol_result", "Claude web search omitted its result");
     if (this.resultRecord.is_error) {
-      const result = typeof this.resultRecord.result === "string" && this.resultRecord.result.trim()
-        ? this.resultRecord.result.trim()
-        : undefined;
-      const errors = Array.isArray(this.resultRecord.errors)
-        ? this.resultRecord.errors.filter((error): error is string => typeof error === "string" && Boolean(error.trim())).join("; ")
-        : "";
-      const terminal = typeof this.resultRecord.terminal_reason === "string" && this.resultRecord.terminal_reason.trim()
-        ? this.resultRecord.terminal_reason.trim()
-        : undefined;
       const status = typeof this.resultRecord.api_error_status === "number" && Number.isFinite(this.resultRecord.api_error_status)
         ? ` (${this.resultRecord.api_error_status})`
         : "";
-      const detail = result ?? (errors || terminal || this.rateLimitFailure || "unknown error");
+      const detail = terminalResultErrorDetail(this.resultRecord as unknown as Record<string, unknown>, undefined, this.rateLimitFailure);
       throw new Error(`Claude web search failed${status}: ${detail}`);
     }
     if (typeof this.resultRecord.result !== "string" || !this.resultRecord.result) {

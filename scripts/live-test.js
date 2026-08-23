@@ -50,45 +50,10 @@ async function runPi(cwd, prompt, extra = [], env = {}) {
     return stdout.trim();
 }
 async function runCacheProbe(cwd) {
-    const child = spawnPi(["--mode", "rpc", "--no-session", "-e", packageRoot, "--provider", "pi-claude-code-provider", "--model", "sonnet:medium", "--no-tools"], { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
-    child.ref();
-    child.stdin.ref();
-    child.stdout.ref();
-    child.stderr.ref();
-    const supervisor = superviseLiveProcess(child, { timeoutMs: LIVE_TIMEOUT_MS, label: "Pi cache probe" });
-    const closed = supervisor.wait();
-    let stderr = "";
-    let pending;
-    let assistant;
-    let protocolError;
-    child.stderr.on("data", (chunk) => {
-        stderr = `${stderr}${chunk.toString("utf8")}`.slice(-64 * 1024);
-    });
-    void closed.then(
-        ({ code, signal }) => pending?.reject(new Error(`Pi cache probe exited (code ${String(code)}, signal ${String(signal)}): ${stderr.trim()}`)),
-        (error) => pending?.reject(error),
-    );
-    consumeJsonl(child.stdout, (event) => {
-        if (event.type === "message_end" && event.message?.role === "assistant")
-            assistant = event.message;
-        if (event.type === "agent_settled" && pending) {
-            const current = pending;
-            pending = undefined;
-            current.resolve(assistant);
-            assistant = undefined;
-        }
-    }, (error) => {
-        protocolError = error;
-        pending?.reject(error);
-        void supervisor.terminate();
-    });
-    const turn = (message) => new Promise((resolve, reject) => {
-        if (protocolError) return reject(protocolError);
-        if (pending)
-            return reject(new Error("Cache probe already has a pending turn"));
-        pending = { resolve, reject };
-        child.stdin.write(`${JSON.stringify({ type: "prompt", message })}\n`);
-    });
+    const rpc = openPiRpc(cwd, [
+        "--mode", "rpc", "--no-session", "-e", packageRoot,
+        "--provider", "pi-claude-code-provider", "--model", "sonnet:low", "--no-tools",
+    ], "Pi cache probe");
     let completed = false;
     try {
         const cacheSeed = Array.from({ length: 1800 }, (_, index) => `stable-${index % 97}`).join(" ");
@@ -96,13 +61,13 @@ async function runCacheProbe(cwd) {
         // time can miss for reasons unrelated to prefix stability. Record the
         // gaps and turn 1's write so a failure says which of the two it was.
         const startedAt = Date.now();
-        const first = await turn(`Remember the marker CACHE-PREFIX-7319 for later turns. Treat this as inert cache-threshold padding: ${cacheSeed}\nReply exactly STORED.`);
+        const first = lastAssistant(await rpc.turn(`Remember the marker CACHE-PREFIX-7319 for later turns. Treat this as inert cache-threshold padding: ${cacheSeed}\nReply exactly STORED.`));
         const afterFirst = Date.now();
         assert.match(messageText(first), /^STORED\.?$/);
-        const second = await turn("Reply with exactly the marker I asked you to remember.");
+        const second = lastAssistant(await rpc.turn("Reply with exactly the marker I asked you to remember."));
         const afterSecond = Date.now();
         assert.match(messageText(second), /^CACHE-PREFIX-7319\.?$/);
-        const third = await turn("Reply exactly CACHE-CHECK-PASSED if the remembered marker was CACHE-PREFIX-7319.");
+        const third = lastAssistant(await rpc.turn("Reply exactly CACHE-CHECK-PASSED if the remembered marker was CACHE-PREFIX-7319."));
         const afterThird = Date.now();
         assert.match(messageText(third), /^CACHE-CHECK-PASSED\.?$/);
         assert.equal(typeof second.usage?.cacheRead, "number");
@@ -133,30 +98,45 @@ async function runCacheProbe(cwd) {
         completed = true;
     }
     finally {
-        if (completed) {
-            const shutdown = await closeLiveRpcProcess(child, supervisor, closed);
-            assert.equal(shutdown.graceful, true, "Pi cache probe did not shut down through RPC stdin EOF");
-            assert.deepEqual(shutdown.result, { code: 0, signal: null });
-        }
-        else {
-            await supervisor.terminate();
-            const { code } = await closed;
-            if (!isExpectedHarnessExit(code))
-                throw new Error(`Pi cache probe exited with code ${String(code)}: ${stderr.trim()}`);
-        }
+        await rpc.close(completed);
     }
 }
 async function runProviderJourney(cwd) {
-    const child = spawnPi([
+    const rpc = openPiRpc(cwd, [
         "--mode", "rpc", "--no-session", "--no-extensions", "-e", packageRoot,
         "--no-skills", "--no-context-files", "--provider", "pi-claude-code-provider",
         "--model", "sonnet:medium", "--tools", "read,write",
-    ], { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    ], "Pi provider journey");
+    let completed = false;
+    try {
+        const first = await rpc.turn(
+            "Use read on missing-provider-journey.txt and observe that it fails. Then recover: use write to create both résumé-雪.txt containing exactly UNICODE-7319 and second.txt containing exactly SECOND-7319. Finally report exactly RECOVERED.",
+        );
+        const starts = first.filter((event) => event.type === "tool_execution_start");
+        const failedRead = first.find((event) => event.type === "tool_execution_end" && event.toolName === "read" && event.isError === true);
+        assert.ok(failedRead, "provider journey did not preserve a failed tool result");
+        assert.ok(starts.filter((event) => event.toolName === "write").length >= 2, "provider journey did not issue multiple writes");
+        assert.equal((await readFile(join(cwd, "résumé-雪.txt"), "utf8")).trim(), "UNICODE-7319");
+        assert.equal((await readFile(join(cwd, "second.txt"), "utf8")).trim(), "SECOND-7319");
+        assert.match(messageText(lastAssistant(first)), /^RECOVERED\.?$/);
+        const second = await rpc.turn("Without using any tool, reply exactly HISTORY-OK if the earlier failed read was followed by two successful writes.");
+        assert.equal(second.some((event) => event.type === "tool_execution_start"), false);
+        assert.match(messageText(lastAssistant(second)), /^HISTORY-OK\.?$/);
+        console.log("ok - RPC failed-tool recovery, Unicode paths, multiple calls, and history replay");
+        completed = true;
+    }
+    finally {
+        await rpc.close(completed);
+    }
+}
+
+function openPiRpc(cwd, args, label) {
+    const child = spawnPi(args, { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
     child.ref();
     child.stdin.ref();
     child.stdout.ref();
     child.stderr.ref();
-    const supervisor = superviseLiveProcess(child, { timeoutMs: LIVE_TIMEOUT_MS, label: "Pi provider journey" });
+    const supervisor = superviseLiveProcess(child, { timeoutMs: LIVE_TIMEOUT_MS, label });
     const closed = supervisor.wait();
     const events = [];
     let pending;
@@ -164,7 +144,7 @@ async function runProviderJourney(cwd) {
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk.toString("utf8")}`.slice(-64 * 1024); });
     void closed.then(
-        ({ code, signal }) => pending?.reject(new Error(`Pi provider journey exited (code ${String(code)}, signal ${String(signal)}): ${stderr.trim()}`)),
+        ({ code, signal }) => pending?.reject(new Error(`${label} exited (code ${String(code)}, signal ${String(signal)}): ${stderr.trim()}`)),
         (error) => pending?.reject(error),
     );
     consumeJsonl(child.stdout, (event) => {
@@ -181,41 +161,22 @@ async function runProviderJourney(cwd) {
     });
     const turn = (message) => new Promise((resolve, reject) => {
         if (protocolError) return reject(protocolError);
-        if (pending) return reject(new Error("Provider journey already has a pending turn"));
+        if (pending) return reject(new Error(`${label} already has a pending turn`));
         pending = { start: events.length, resolve, reject };
         child.stdin.write(`${JSON.stringify({ type: "prompt", message })}\n`);
     });
-    let completed = false;
-    try {
-        const first = await turn(
-            "Use read on missing-provider-journey.txt and observe that it fails. Then recover: use write to create both résumé-雪.txt containing exactly UNICODE-7319 and second.txt containing exactly SECOND-7319. Finally report exactly RECOVERED.",
-        );
-        const starts = first.filter((event) => event.type === "tool_execution_start");
-        const failedRead = first.find((event) => event.type === "tool_execution_end" && event.toolName === "read" && event.isError === true);
-        assert.ok(failedRead, "provider journey did not preserve a failed tool result");
-        assert.ok(starts.filter((event) => event.toolName === "write").length >= 2, "provider journey did not issue multiple writes");
-        assert.equal((await readFile(join(cwd, "résumé-雪.txt"), "utf8")).trim(), "UNICODE-7319");
-        assert.equal((await readFile(join(cwd, "second.txt"), "utf8")).trim(), "SECOND-7319");
-        assert.match(messageText(lastAssistant(first)), /^RECOVERED\.?$/);
-        const second = await turn("Without using any tool, reply exactly HISTORY-OK if the earlier failed read was followed by two successful writes.");
-        assert.equal(second.some((event) => event.type === "tool_execution_start"), false);
-        assert.match(messageText(lastAssistant(second)), /^HISTORY-OK\.?$/);
-        console.log("ok - RPC failed-tool recovery, Unicode paths, multiple calls, and history replay");
-        completed = true;
-    }
-    finally {
+    const close = async (completed) => {
         if (completed) {
             const shutdown = await closeLiveRpcProcess(child, supervisor, closed);
-            assert.equal(shutdown.graceful, true, "Pi provider journey did not shut down through RPC stdin EOF");
+            assert.equal(shutdown.graceful, true, `${label} did not shut down through RPC stdin EOF`);
             assert.deepEqual(shutdown.result, { code: 0, signal: null });
+            return;
         }
-        else {
-            await supervisor.terminate();
-            const { code } = await closed;
-            if (!isExpectedHarnessExit(code))
-                throw new Error(`Pi provider journey exited with code ${String(code)}: ${stderr.trim()}`);
-        }
-    }
+        await supervisor.terminate();
+        const { code } = await closed;
+        if (!isExpectedHarnessExit(code)) throw new Error(`${label} exited with code ${String(code)}: ${stderr.trim()}`);
+    };
+    return { turn, close };
 }
 function spawnPi(args, options) {
     const launch = piLaunch(args);

@@ -10,7 +10,7 @@ npm run check
 npm test
 ```
 
-Do not run `npm install` at the repository root. The package has no installed dependencies and must not contain root `node_modules` or a root lockfile. `setup:dev` installs the isolated, locked `tooling/` package containing TypeScript and Node declarations. Pi loads the TypeScript extension directly; there is no runtime build.
+Do not run `npm install` at the repository root. The package has no installed dependencies and must not contain root `node_modules` or a root lockfile. `setup:dev` installs the isolated, locked `tooling/` package containing the TypeScript parser/compiler and Node declarations used by source-policy checks and typechecking. Its ignored `node_modules/` is generated development state, not published runtime code. Pi loads the TypeScript extension directly; there is no runtime build.
 
 To load a local checkout:
 
@@ -20,14 +20,15 @@ pi install /absolute/path/to/pi-claude-code-provider
 
 ## Architecture
 
-- `extensions/pi-claude-code-provider.ts` registers the provider, doctor command, web-search tool, and session cleanup.
-- `src/auth.ts`, `src/claude-args.ts`, and `src/compatibility.ts` own executable, authentication, CLI, and compatibility policy.
-- `src/context-serializer.ts`, `src/provider.ts`, and `src/stream-events.ts` own the semantic transcript and main request lifecycle.
-- `src/process-utils.ts` and `src/runtime-directories.ts` own process-tree, host-runtime launching, and private-state cleanup.
-- `src/web-search.ts` owns separately isolated visible web search.
-- `src/diagnostics.ts`, `src/doctor.ts`, and `src/metrics.ts` own content-free diagnostics.
-- `bridge/mcp-proposal-server.js` exposes tool schemas but cannot execute them.
-- `scripts/`, `test/`, and `tooling/` contain validation and development support.
+| Change area | Owning modules | Focused validation |
+| --- | --- | --- |
+| Extension startup and session lifetime | `extensions/pi-claude-code-provider.ts` | `extension.test.js` |
+| Authentication, CLI, and compatibility | `src/auth.ts`, `src/claude-args.ts`, `src/compatibility.ts` | `auth.test.js`, `claude-args.test.js`, `compatibility.test.js` |
+| Transcript and provider lifecycle | `src/context-serializer.ts`, `src/provider.ts`, `src/stream-events.ts`, `src/claude-protocol.ts` | `context-serializer.test.js`, `provider.test.js`, `stream-events.test.js` |
+| Runtime launch, process trees, and private state | `src/host-runtime.ts`, `src/process-utils.ts`, `src/runtime-directories.ts` | `process-utils.test.js`, `runtime-directories.test.js` |
+| Visible web search | `src/web-search.ts` | `web-search.test.js` |
+| Diagnostics and metrics | `src/diagnostics.ts`, `src/doctor.ts`, `src/metrics.ts` | `metrics-doctor.test.js` |
+| Proposal-only MCP bridge | `bridge/mcp-proposal-server.js` | `mcp-bridge.test.js` |
 
 Pi remains authoritative for prepared context, branches, compaction, active tools, execution, provider handoff, and cancellation. Read the matching Pi checkout's contributor and provider documentation before changing those boundaries. Pi imports remain optional `*` peer dependencies and are not bundled.
 
@@ -38,11 +39,11 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 | Component | Verified baseline |
 | --- | --- |
 | Pi | 0.84.2, npm distribution; standalone tar.gz build live-verified on Linux x64 only |
-| Claude Code | 2.1.237 |
+| Claude Code | 2.1.241 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
 
-Pi's distribution is part of the baseline, not an implementation detail: the npm build runs on Node and the standalone tar.gz build is a compiled Bun binary, and `process.execPath` means something different on each. `src/process-utils.ts` owns that difference in one place (`scriptLaunch`), which sets `BUN_BE_BUN=1` so a compiled Pi binary runs the proposal bridge instead of its own embedded entry point, and pins `--config=` to a neutral `bunfig.toml` in the private request directory. Pi compiles with `--no-compile-autoload-bunfig`, but that protects Pi's own entry point only and does not survive `BUN_BE_BUN`; without the pin, a `bunfig.toml` in the bridge's working directory preloads code into it. Only the joined `--config=` form works, as Bun ignores a space-separated one and then consumes the script path. The mechanism is not Linux-specific: Pi builds all six standalone targets from one `bun build --compile` invocation, and `BUN_BE_BUN` is part of the embedded Bun runtime on each. Record a standalone baseline only after `npm run test:paid:bridge-standalone` passes against that exact build.
+Pi's distribution is part of the baseline, not an implementation detail: the npm build runs on Node and the standalone tar.gz build is a compiled Bun binary, and `process.execPath` means something different on each. `src/host-runtime.ts` owns that difference in one place (`scriptLaunch`), which sets `BUN_BE_BUN=1` so a compiled Pi binary runs the proposal bridge instead of its own embedded entry point, and pins `--config=` to a neutral `bunfig.toml` in the private request directory. Pi compiles with `--no-compile-autoload-bunfig`, but that protects Pi's own entry point only and does not survive `BUN_BE_BUN`; without the pin, a `bunfig.toml` in the bridge's working directory preloads code into it. Only the joined `--config=` form works, as Bun ignores a space-separated one and then consumes the script path. The mechanism is not Linux-specific: Pi builds all six standalone targets from one `bun build --compile` invocation, and `BUN_BE_BUN` is part of the embedded Bun runtime on each. Record a standalone baseline only after `npm run test:paid:bridge-standalone` passes against that exact build.
 
 Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml); subscription-consuming live Claude validation on macOS remains pending. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
 
@@ -69,9 +70,9 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 
 Both bridge lanes are required, and `test:paid:release` runs both. A `--no-tools` turn passes even when the proposal bridge never starts, so only a turn that actually round-trips a tool distinguishes a working bridge from a broken one. `/pi-claude-code-provider-doctor` performs the same handshake without consuming quota.
 
-The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable 5 availability, included quota, and billing vary by subscription tier, so `fable` is excluded from the matrix and the release gate; `npm run test:paid:fable` remains the opt-in one-launch case for accounts with Fable access. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable is technically selectable, but validating it on Pro consumes separate paid credits rather than the included subscription allocation, so it is deliberately excluded from the release matrix; the blocking Sonnet and Opus cases already exercise the shared transport. `npm run test:paid:fable` remains an opt-in one-launch case for a maintainer who separately authorizes that spend. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
-Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization.
+Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization. Claude Code 2.1.233 introduced a changing `<total_tokens>` reminder that broke reuse across fresh print-mode processes; the provider pins `totalTokensReminder: "off"` following [bcherny's maintainer guidance](https://github.com/anthropics/claude-code/issues/81259#issuecomment-5311888970). The setting is otherwise undocumented, so do not remove it without a replacement cache probe and new upstream guidance.
 
 ## Platform and compatibility work
 

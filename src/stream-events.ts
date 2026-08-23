@@ -1,5 +1,11 @@
 import type { AssistantMessageEventStream, ToolCall } from "@earendil-works/pi-ai";
 import { ClaudeCodeError } from "./errors.ts";
+import {
+  parseRateLimitNotice,
+  terminalResultErrorDetail,
+  validateClaudeInitialization,
+  type RateLimitNoticeSink,
+} from "./claude-protocol.ts";
 import type { MutableOutput } from "./types.ts";
 
 interface StreamEventEnvelope {
@@ -16,6 +22,7 @@ interface StreamEventEnvelope {
   terminal_reason?: string | null;
   tools?: unknown;
   mcp_servers?: unknown;
+  mcp_server_errors?: unknown;
   model?: string;
   permissionMode?: string;
   slash_commands?: unknown;
@@ -25,29 +32,19 @@ interface StreamEventEnvelope {
   rate_limit_info?: unknown;
 }
 
-export interface ClaudeInitializationExpectation {
-  tools: ReadonlySet<string>;
-  mcpServer: "none" | "pi";
-}
-
-export interface RateLimitNotice {
-  status: "allowed_warning" | "rejected";
-  rateLimitType: string;
-  /** Raw Claude Code utilization is a fraction from 0 through 1, not a percentage. */
-  utilization?: number;
-  /** Reset for the reported rateLimitType, normalized from raw Unix seconds to JavaScript milliseconds. */
-  resetsAt?: number;
-  overageStatus?: "allowed_warning" | "rejected";
-  /** Raw overage reset, retained separately and therefore possibly equal to resetsAt when overage is the subject. */
-  overageResetsAt?: number;
-  overageDisabledReason?: string;
-  isUsingOverage?: boolean;
-}
-
-export type RateLimitNoticeSink = (notice: RateLimitNotice) => void;
-
 /** Publishes Pi's provider-response observation once the transport handshake validates. Async observers gate body mapping. */
 export type ResponseAnnouncementSink = () => void | Promise<void>;
+
+export interface ClaudeEventMapperOptions {
+  stream: AssistantMessageEventStream;
+  output: MutableOutput;
+  expectedTools: Set<string>;
+  toolNames: Map<string, string>;
+  onToolUse: () => void;
+  onRateLimitNotice?: RateLimitNoticeSink;
+  onResponseAnnouncement?: ResponseAnnouncementSink;
+  privatePaths?: readonly string[];
+}
 
 interface IndexedBlock {
   // The map key is Claude's source index; contentIndex identifies the matching
@@ -55,8 +52,6 @@ interface IndexedBlock {
   contentIndex: number;
   partialJson?: string;
 }
-
-const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
 export type ClaudeTerminationCause = "none" | "tool_handoff" | "caller_abort";
 
@@ -83,23 +78,17 @@ export class ClaudeEventMapper {
   private readonly onResponseAnnouncement: ResponseAnnouncementSink;
   private readonly emittedRateLimitNotices = new Set<string>();
   private assistantDiagnostic: string | undefined;
+  private readonly privatePaths: readonly string[];
 
-  constructor(
-    stream: AssistantMessageEventStream,
-    output: MutableOutput,
-    expectedTools: Set<string>,
-    toolNames: Map<string, string>,
-    onToolUse: () => void,
-    onRateLimitNotice: RateLimitNoticeSink = () => {},
-    onResponseAnnouncement: ResponseAnnouncementSink = () => {},
-  ) {
-    this.stream = stream;
-    this.output = output;
-    this.expectedTools = expectedTools;
-    this.toolNames = toolNames;
-    this.onToolUse = onToolUse;
-    this.onRateLimitNotice = onRateLimitNotice;
-    this.onResponseAnnouncement = onResponseAnnouncement;
+  constructor(options: ClaudeEventMapperOptions) {
+    this.stream = options.stream;
+    this.output = options.output;
+    this.expectedTools = options.expectedTools;
+    this.toolNames = options.toolNames;
+    this.onToolUse = options.onToolUse;
+    this.onRateLimitNotice = options.onRateLimitNotice ?? (() => {});
+    this.onResponseAnnouncement = options.onResponseAnnouncement ?? (() => {});
+    this.privatePaths = options.privatePaths ?? [];
   }
 
   get isTerminal(): boolean {
@@ -176,6 +165,7 @@ export class ClaudeEventMapper {
     this.output.responseModel = validateClaudeInitialization(record, {
       tools: this.expectedTools,
       mcpServer: this.expectedTools.size === 0 ? "none" : "pi",
+      privatePaths: this.privatePaths,
     });
     this.initialized = true;
     // Validated initialization is this transport's analogue of a received
@@ -341,7 +331,7 @@ export class ClaudeEventMapper {
       const status = typeof record.api_error_status === "number" && Number.isFinite(record.api_error_status)
         ? ` (${record.api_error_status})`
         : "";
-      this.fail(`Claude Code request failed${status}: ${resultErrorDetail(record, this.assistantDiagnostic, this.rejectedRateLimit)}`);
+      this.fail(`Claude Code request failed${status}: ${terminalResultErrorDetail(record as Record<string, unknown>, this.assistantDiagnostic, this.rejectedRateLimit)}`);
       return;
     }
     if (record.stop_reason !== null && record.stop_reason !== undefined && this.stopReason === undefined) {
@@ -472,69 +462,6 @@ export class ClaudeEventMapper {
   }
 }
 
-function validTimestamp(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
-  // The raw `claude -p` protocol follows the SDK contract's Unix timestamp
-  // convention (seconds). Keep JavaScript-facing notices in milliseconds, but
-  // avoid double-converting a plausible epoch-millisecond value from a future
-  // CLI version or intermediary.
-  const milliseconds = value >= EPOCH_MILLISECONDS_THRESHOLD ? value : value * 1000;
-  return !Number.isSafeInteger(milliseconds) || Number.isNaN(new Date(milliseconds).getTime())
-    ? undefined
-    : milliseconds;
-}
-
-function validUtilization(value: unknown): number | undefined {
-  // Keep the wire value fractional; convert it to a percentage only when rendering the notice.
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
-}
-
-export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined {
-  if (!info || typeof info !== "object" || Array.isArray(info)) {
-    // Rate-limit events are advisory. Ignore a malformed payload so it cannot
-    // turn an otherwise valid provider or web-search request into a failure.
-    return undefined;
-  }
-  const rate = info as Record<string, unknown>;
-  const primaryStatus = alertStatus(rate.status);
-  const overageStatus = alertStatus(rate.overageStatus);
-  const usingOverage = rate.isUsingOverage === true;
-  // Overage is subordinate to the plan window. A disabled or exhausted overage
-  // pool only constrains a request when the plan window is already exhausted or
-  // the account is actually drawing on overage; `org_level_disabled` is the
-  // permanent steady state on a subscription without usage credits and is sent
-  // on every event, so it must never be reported as a rate limit on its own.
-  const overageBlocking = overageStatus === "rejected" && (primaryStatus === "rejected" || usingOverage);
-  if (!primaryStatus && !overageBlocking) return undefined;
-  const status = primaryStatus === "rejected" || overageBlocking ? "rejected" : "allowed_warning";
-  const hasPrimaryAlert = primaryStatus !== undefined;
-  // Overage context is noise unless it explains the current constraint.
-  const overageRelevant = overageStatus !== undefined && (primaryStatus === "rejected" || usingOverage);
-  const rateLimitType = hasPrimaryAlert
-    ? typeof rate.rateLimitType === "string" && rate.rateLimitType.trim() ? rate.rateLimitType.trim() : "unknown"
-    : "overage";
-  const overageReset = validTimestamp(rate.overageResetsAt);
-  const resetsAt = validTimestamp(hasPrimaryAlert ? rate.resetsAt : rate.overageResetsAt);
-  const utilization = validUtilization(rate.utilization);
-  const reason = typeof rate.overageDisabledReason === "string" && rate.overageDisabledReason.trim()
-    ? rate.overageDisabledReason.trim()
-    : undefined;
-  return {
-    status,
-    rateLimitType,
-    ...(hasPrimaryAlert && utilization !== undefined ? { utilization } : {}),
-    ...(resetsAt === undefined ? {} : { resetsAt }),
-    ...(overageRelevant ? { overageStatus } : {}),
-    ...(overageRelevant && hasPrimaryAlert && overageReset !== undefined ? { overageResetsAt: overageReset } : {}),
-    ...(overageRelevant && reason !== undefined ? { overageDisabledReason: reason } : {}),
-    ...(usingOverage ? { isUsingOverage: true } : {}),
-  };
-}
-
-function alertStatus(value: unknown): RateLimitNotice["status"] | undefined {
-  return value === "allowed_warning" || value === "rejected" ? value : undefined;
-}
-
 function stopReason(value: unknown): string {
   // Claude exposes this as a string rather than a closed enum. Pi only gives
   // special meaning to max_tokens and tool_use, so preserve future values as
@@ -543,74 +470,6 @@ function stopReason(value: unknown): string {
     throw new ClaudeCodeError("protocol_stop", `Invalid Claude stop reason: ${String(value)}`);
   }
   return value;
-}
-
-function resultErrorDetail(
-  record: StreamEventEnvelope,
-  assistantDiagnostic: string | undefined,
-  rateLimitFailure: string | undefined,
-): string {
-  const result = typeof record.result === "string" && record.result.trim() ? record.result.trim() : undefined;
-  const errors = Array.isArray(record.errors)
-    ? record.errors.filter((error): error is string => typeof error === "string" && Boolean(error.trim())).join("; ")
-    : "";
-  const terminal = typeof record.terminal_reason === "string" && record.terminal_reason.trim()
-    ? record.terminal_reason.trim()
-    : undefined;
-  return result ?? assistantDiagnostic ?? (errors || undefined) ?? terminal ?? rateLimitFailure ?? "unknown error";
-}
-
-export function validateClaudeInitialization(
-  value: unknown,
-  expectation: ClaudeInitializationExpectation,
-): string {
-  const record = object(value, "Claude initialization");
-  if (record.type !== "system" || record.subtype !== "init") {
-    throw new ClaudeCodeError("protocol_init", "Claude initialization record was invalid");
-  }
-  if (!Array.isArray(record.tools)) throw new ClaudeCodeError("protocol_init", "Claude initialization omitted tools");
-  const toolValues = record.tools;
-  if (toolValues.some((tool) => typeof tool !== "string")) {
-    throw new ClaudeCodeError("protocol_init", "Claude initialization contained an invalid tool name");
-  }
-  const tools = new Set(toolValues as string[]);
-  if (
-    tools.size !== toolValues.length ||
-    tools.size !== expectation.tools.size ||
-    [...tools].some((tool) => !expectation.tools.has(tool))
-  ) {
-    throw new ClaudeCodeError(
-      "isolation_tools",
-      `Claude Code initialized with an unexpected tool set (expected: ${formatNames(expectation.tools)}; observed: ${formatNames(tools)})`,
-    );
-  }
-  if (record.permissionMode !== "dontAsk") {
-    throw new ClaudeCodeError("isolation_permissions", "Claude Code did not enter dontAsk permission mode");
-  }
-  if (!Array.isArray(record.slash_commands) || !Array.isArray(record.skills) || !Array.isArray(record.plugins)) {
-    throw new ClaudeCodeError("protocol_init", "Claude initialization omitted customization inventories");
-  }
-  if (record.slash_commands.length > 0 || record.skills.length > 0 || record.plugins.length > 0) {
-    throw new ClaudeCodeError("isolation_customizations", "Claude Code loaded unexpected customizations");
-  }
-  if (record.apiKeySource !== "none") {
-    throw new ClaudeCodeError("isolation_auth", "Claude Code did not confirm subscription-backed authentication");
-  }
-  if (!Array.isArray(record.mcp_servers)) throw new ClaudeCodeError("protocol_init", "Claude initialization omitted MCP inventory");
-  const servers = record.mcp_servers as Array<{ name?: unknown; status?: unknown }>;
-  if (expectation.mcpServer === "none") {
-    if (servers.length > 0) throw new ClaudeCodeError("isolation_mcp", "Claude Code loaded an unexpected MCP server");
-  } else if (servers.length !== 1 || servers[0]?.name !== "pi" || servers[0]?.status !== "connected") {
-    throw new ClaudeCodeError("isolation_mcp", "The Pi proposal MCP server did not initialize correctly");
-  }
-  if (typeof record.model !== "string" || record.model.length === 0) {
-    throw new ClaudeCodeError("protocol_init", "Claude initialization omitted the resolved model");
-  }
-  return record.model;
-}
-
-function formatNames(names: ReadonlySet<string>): string {
-  return [...names].sort().join(", ") || "none";
 }
 
 function number(value: unknown): number | undefined {

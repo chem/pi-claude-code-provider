@@ -2,7 +2,7 @@
   "name": "pi-claude-code-provider-tooling",
   "private": true,
   "version": "0.0.0",
-  "description": "Isolated development-only type checking for pi-claude-code-provider",
+  "description": "Isolated development-only validation tooling for pi-claude-code-provider",
   "devDependencies": {
     "@types/node": "22.20.1",
     "typescript": "5.9.3"

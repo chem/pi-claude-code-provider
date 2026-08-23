@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
-import { bridgeCommand } from "../src/claude-args.ts";
+import { bridgeArgv } from "../src/claude-args.ts";
 import { VERIFIED_VERSIONS, platformStatus, versionStatus } from "../src/compatibility.ts";
 import { writeDiagnosticReport } from "../src/diagnostics.ts";
 import { errorText, normalizeClaudeOverflow } from "../src/errors.ts";
@@ -15,7 +15,9 @@ import { flushMetricsLog, getLastRequestMetrics, getLastSearchMetrics, getMetric
 import { createClaudeStream } from "../src/provider.ts";
 import { cleanupStaleRuntimeDirectories, createRuntimeDirectory } from "../src/runtime-directories.ts";
 import { searchWithClaude } from "../src/web-search.ts";
-import type { RateLimitNotice } from "../src/stream-events.ts";
+import type { RateLimitNotice } from "../src/claude-protocol.ts";
+import type { RuntimeCleanupResult } from "../src/runtime-directories.ts";
+import type { ClaudeInstallation } from "../src/types.ts";
 
 const PROVIDER = "pi-claude-code-provider";
 const SEARCH_TOOL = "pi_claude_code_provider_web_search";
@@ -24,6 +26,69 @@ const MAX_TRACKED_RATE_LIMIT_NOTICES = 64;
 
 export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<void> {
   const runtimeCleanup = await cleanupStaleRuntimeDirectories();
+  registerDoctorCommand(pi, runtimeCleanup);
+
+  let installation: ClaudeInstallation;
+  try {
+    installation = await inspectClaudeInstallation();
+  } catch (error) {
+    registerUnavailableNotice(pi, errorText(error));
+    return;
+  }
+  const providerModels = providerModelsForSubscription(installation.subscriptionType);
+  const currentPlatform = platformStatus();
+  const searchOutputs = createSearchOutputOwner();
+  let searchRegistrationAttempted = false;
+  let activeRateLimitNotify: ((notice: RateLimitNotice) => void) | undefined;
+
+  pi.registerProvider(PROVIDER, {
+    name: "Claude Code Subscription",
+    baseUrl: "pi-claude-code-provider://local",
+    apiKey: "pi-claude-code-provider-subscription",
+    api: "pi-claude-code-provider-headless",
+    models: providerModels,
+    streamSimple: createClaudeStream(installation, {
+      onRateLimitNotice: (notice) => activeRateLimitNotify?.(notice),
+    }),
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    searchOutputs.open();
+    activeRateLimitNotify = createRateLimitNotifier((message) => ctx.ui.notify(message, "warning"));
+    if (currentPlatform.warning) ctx.ui.notify(`${NOTICE_PREFIX} ${currentPlatform.warning}`, "warning");
+    if (searchRegistrationAttempted) return;
+    searchRegistrationAttempted = true;
+    registerWebSearchTool(
+      pi,
+      installation,
+      searchOutputs.retain,
+      (notice) => activeRateLimitNotify?.(notice),
+      (message) => ctx.ui.notify(message, "warning"),
+    );
+  });
+
+  pi.on("session_shutdown", async () => {
+    activeRateLimitNotify = undefined;
+    try {
+      await searchOutputs.close();
+    } finally {
+      await flushMetricsLog();
+    }
+  });
+
+  pi.on("message_end", (event, ctx) => {
+    const message = event.message;
+    if (message.role !== "assistant" || message.stopReason !== "error") return;
+    const assistant = message as AssistantMessage;
+    if (assistant.provider !== PROVIDER && ctx.model?.provider !== PROVIDER) return;
+    const errorMessage = assistant.errorMessage ?? "";
+    const normalized = normalizeClaudeOverflow(errorMessage);
+    if (normalized === errorMessage) return;
+    return { message: { ...assistant, errorMessage: normalized } };
+  });
+}
+
+function registerDoctorCommand(pi: ExtensionAPI, runtimeCleanup: RuntimeCleanupResult): void {
   pi.registerCommand("pi-claude-code-provider-doctor", {
     description: "Check Claude Code compatibility or write a diagnostic report",
     handler: async (args, ctx) => {
@@ -35,28 +100,19 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
         }
         const currentPlatform = platformStatus();
         const piStatus = versionStatus("Pi", VERSION, VERIFIED_VERSIONS.pi);
-        // Prove the bridge actually runs. Everything else the doctor reports is
-        // satisfied by an install whose proposal server can never start.
         const bridgeProbe = await probeBridge().catch((error: unknown) => ({
           ok: false,
-          command: bridgeCommand(),
+          argv: bridgeArgv(),
           detail: errorText(error),
         }));
         if (command === "report") {
-          let current: Awaited<ReturnType<typeof inspectClaudeInstallation>> | undefined;
+          let current: ClaudeInstallation | undefined;
           let preflightError: unknown;
-          try {
-            current = await inspectClaudeInstallation();
-          } catch (error) {
-            preflightError = error;
-          }
-          const claudeStatus = current
-            ? versionStatus("Claude Code", current.version, VERIFIED_VERSIONS.claudeCode)
-            : undefined;
+          try { current = await inspectClaudeInstallation(); } catch (error) { preflightError = error; }
           const path = await writeDiagnosticReport({
             platformStatus: currentPlatform,
             piStatus,
-            claudeStatus,
+            claudeStatus: current ? versionStatus("Claude Code", current.version, VERIFIED_VERSIONS.claudeCode) : undefined,
             installation: current,
             preflightError,
             metrics: getLastRequestMetrics(),
@@ -73,177 +129,119 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
         }
         const current = await inspectClaudeInstallation();
         const claudeStatus = versionStatus("Claude Code", current.version, VERIFIED_VERSIONS.claudeCode);
-        ctx.ui.notify(
-          formatDoctorSummary({
-            platformStatus: currentPlatform,
-            piStatus,
-            claudeStatus,
-            installation: current,
-            modelIds: providerModelsForSubscription(current.subscriptionType).map((model) => model.id),
-            metrics: getLastRequestMetrics(),
-            metricsLogError: getMetricsLogError(),
-            runtimeCleanup,
-            bridgeProbe,
-          }),
-          bridgeProbe.ok && claudeStatus.isVerified && piStatus.isVerified && currentPlatform.isVerified ? "info" : "warning",
-        );
+        ctx.ui.notify(formatDoctorSummary({
+          platformStatus: currentPlatform,
+          piStatus,
+          claudeStatus,
+          installation: current,
+          modelIds: providerModelsForSubscription(current.subscriptionType).map((model) => model.id),
+          metrics: getLastRequestMetrics(),
+          metricsLogError: getMetricsLogError(),
+          runtimeCleanup,
+          bridgeProbe,
+        }), bridgeProbe.ok && claudeStatus.isVerified && piStatus.isVerified && currentPlatform.isVerified ? "info" : "warning");
       } catch (error) {
         ctx.ui.notify(errorText(error), "error");
       }
     },
   });
+}
 
-  let installation: Awaited<ReturnType<typeof inspectClaudeInstallation>>;
-  try {
-    installation = await inspectClaudeInstallation();
-  } catch (error) {
-    registerUnavailableNotice(pi, errorText(error));
-    return;
-  }
-  const providerModels = providerModelsForSubscription(installation.subscriptionType);
-  const currentPlatform = platformStatus();
-  let searchRegistered = false;
-  let sessionClosing = true;
-  let activeRateLimitNotify: ((notice: RateLimitNotice) => void) | undefined;
-  // The provider spawns a Claude process per tool round-trip, so per-request
-  // dedupe cannot suppress a notice Claude repeats across a single Pi turn.
-  // Track emitted notices for the whole session instead; both the provider and
-  // the web-search tool report through this one sink.
-  const emittedRateLimitNotices = new Set<string>();
-  const retainedSearchDirectories = new Set<string>();
-  const pendingSearchRetentions = new Set<Promise<{ directory: string; path: string } | undefined>>();
+function createRateLimitNotifier(notify: (message: string) => void): (notice: RateLimitNotice) => void {
+  const emitted = new Set<string>();
+  return (notice) => {
+    const key = JSON.stringify(notice);
+    if (emitted.has(key)) return;
+    if (emitted.size >= MAX_TRACKED_RATE_LIMIT_NOTICES) {
+      const [oldest] = emitted;
+      if (oldest !== undefined) emitted.delete(oldest);
+    }
+    emitted.add(key);
+    notify(formatRateLimitNotice(notice));
+  };
+}
 
-  const retainSearchOutput = (result: string): Promise<{ directory: string; path: string } | undefined> => {
-    if (sessionClosing) return Promise.resolve(undefined);
-    // Register the promise synchronously so session shutdown can await a
-    // directory whose asynchronous creation has started but not yet completed.
+function createSearchOutputOwner() {
+  let closing = true;
+  const retained = new Set<string>();
+  const pending = new Set<Promise<{ directory: string; path: string } | undefined>>();
+  const retain = (result: string): Promise<{ directory: string; path: string } | undefined> => {
+    if (closing) return Promise.resolve(undefined);
     const retention = (async () => {
       const directory = await createRuntimeDirectory("web_search_output");
       const path = join(directory, "result.md");
       try {
         await writeFile(path, result, { mode: 0o600, flag: "wx" });
-        if (sessionClosing) {
+        if (closing) {
           await rm(directory, { recursive: true, force: true });
           return undefined;
         }
-        retainedSearchDirectories.add(directory);
+        retained.add(directory);
         return { directory, path };
       } catch (error) {
         await rm(directory, { recursive: true, force: true });
         throw error;
       }
     })();
-    pendingSearchRetentions.add(retention);
-    void retention.then(
-      () => pendingSearchRetentions.delete(retention),
-      () => pendingSearchRetentions.delete(retention),
-    );
+    pending.add(retention);
+    void retention.finally(() => pending.delete(retention)).catch(() => undefined);
     return retention;
   };
-
-  pi.registerProvider(PROVIDER, {
-    name: "Claude Code Subscription",
-    baseUrl: "pi-claude-code-provider://local",
-    apiKey: "pi-claude-code-provider-subscription",
-    api: "pi-claude-code-provider-headless",
-    models: providerModels,
-    streamSimple: createClaudeStream(installation, undefined, (notice) => activeRateLimitNotify?.(notice)),
-  });
-
-  pi.on("session_start", (_event, ctx) => {
-    sessionClosing = false;
-    emittedRateLimitNotices.clear();
-    activeRateLimitNotify = (notice) => {
-      const key = JSON.stringify(notice);
-      if (emittedRateLimitNotices.has(key)) return;
-      // Utilization changes as a session progresses, so bound the retained keys
-      // rather than letting one long session accumulate them without limit.
-      if (emittedRateLimitNotices.size >= MAX_TRACKED_RATE_LIMIT_NOTICES) {
-        const [oldest] = emittedRateLimitNotices;
-        if (oldest !== undefined) emittedRateLimitNotices.delete(oldest);
-      }
-      emittedRateLimitNotices.add(key);
-      ctx.ui.notify(formatRateLimitNotice(notice), "warning");
-    };
-    if (currentPlatform.warning) ctx.ui.notify(`${NOTICE_PREFIX} ${currentPlatform.warning}`, "warning");
-    if (searchRegistered) return;
-    if (pi.getAllTools().some((tool) => tool.name === SEARCH_TOOL)) {
-      ctx.ui.notify(
-        `${NOTICE_PREFIX} ${SEARCH_TOOL} was not registered because that tool name is already occupied`,
-        "warning",
-      );
-      return;
-    }
-    pi.registerTool({
-      name: SEARCH_TOOL,
-      label: "Web Search",
-      description:
-        `Search the current web through Claude Code and return a concise synthesis with source URLs. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} or ${DEFAULT_MAX_LINES} lines.`,
-      promptSnippet: "Search the current web and return sourced results",
-      promptGuidelines: [`Use ${SEARCH_TOOL} when current external information or online sources are required.`],
-      parameters: Type.Object({
-        query: Type.String({ minLength: 1, description: "Search query" }),
-        focus: Type.Optional(Type.String({ description: "Optional guidance about what to prioritize" })),
-      }),
-      async execute(_toolCallId, params, signal, onUpdate) {
-        onUpdate?.({
-          content: [{ type: "text", text: `Searching the web for: ${params.query}` }],
-          details: { status: "searching" },
-        });
-        const result = await searchWithClaude(
-          installation,
-          params.query,
-          params.focus,
-          signal,
-          undefined,
-          undefined,
-          undefined,
-          (notice) => activeRateLimitNotify?.(notice),
-        );
-        const truncated = truncateHead(result, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
-        let text = truncated.content;
-        let fullOutputPath: string | undefined;
-        if (truncated.truncated) {
-          const retained = await retainSearchOutput(result);
-          if (retained) {
-            fullOutputPath = retained.path;
-            text += `\n\n[Web-search output truncated to ${truncated.outputLines} of ${truncated.totalLines} lines (${formatSize(truncated.outputBytes)} of ${formatSize(truncated.totalBytes)}). Full output: ${fullOutputPath}]`;
-          }
-        }
-        return {
-          content: [{ type: "text", text }],
-          details: { truncated: truncated.truncated, fullOutputPath },
-        };
-      },
-    });
-    searchRegistered = true;
-  });
-
-  pi.on("session_shutdown", async () => {
-    sessionClosing = true;
-    activeRateLimitNotify = undefined;
-    emittedRateLimitNotices.clear();
-    try {
-      await Promise.allSettled([...pendingSearchRetentions]);
-      while (retainedSearchDirectories.size > 0) {
-        const directories = [...retainedSearchDirectories];
-        retainedSearchDirectories.clear();
+  return {
+    open: () => { closing = false; },
+    retain,
+    async close(): Promise<void> {
+      closing = true;
+      await Promise.allSettled([...pending]);
+      while (retained.size > 0) {
+        const directories = [...retained];
+        retained.clear();
         await Promise.all(directories.map((directory) => rm(directory, { recursive: true, force: true })));
       }
-    } finally {
-      await flushMetricsLog();
-    }
-  });
+    },
+  };
+}
 
-  pi.on("message_end", (event, ctx) => {
-    const message = event.message;
-    if (message.role !== "assistant" || message.stopReason !== "error") return;
-    const assistant = message as AssistantMessage;
-    if (assistant.provider !== PROVIDER && ctx.model?.provider !== PROVIDER) return;
-    const errorMessage = assistant.errorMessage ?? "";
-    const normalized = normalizeClaudeOverflow(errorMessage);
-    if (normalized === errorMessage) return;
-    return { message: { ...assistant, errorMessage: normalized } };
+function registerWebSearchTool(
+  pi: ExtensionAPI,
+  installation: ClaudeInstallation,
+  retainOutput: (result: string) => Promise<{ directory: string; path: string } | undefined>,
+  onRateLimitNotice: (notice: RateLimitNotice) => void,
+  notify: (message: string) => void,
+): void {
+  if (pi.getAllTools().some((tool) => tool.name === SEARCH_TOOL)) {
+    notify(`${NOTICE_PREFIX} ${SEARCH_TOOL} was not registered because that tool name is already occupied`);
+    return;
+  }
+  pi.registerTool({
+    name: SEARCH_TOOL,
+    label: "Web Search",
+    description: `Search the current web through Claude Code and return a concise synthesis with source URLs. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} or ${DEFAULT_MAX_LINES} lines.`,
+    promptSnippet: "Search the current web and return sourced results",
+    promptGuidelines: [`Use ${SEARCH_TOOL} when current external information or online sources are required.`],
+    parameters: Type.Object({
+      query: Type.String({ minLength: 1, description: "Search query" }),
+      focus: Type.Optional(Type.String({ description: "Optional guidance about what to prioritize" })),
+    }),
+    async execute(_toolCallId, params, signal, onUpdate) {
+      onUpdate?.({ content: [{ type: "text", text: `Searching the web for: ${params.query}` }], details: { status: "searching" } });
+      const result = await searchWithClaude(
+        installation,
+        { query: params.query, focus: params.focus, signal },
+        { onRateLimitNotice },
+      );
+      const truncated = truncateHead(result, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+      let text = truncated.content;
+      let fullOutputPath: string | undefined;
+      if (truncated.truncated) {
+        const output = await retainOutput(result);
+        if (output) {
+          fullOutputPath = output.path;
+          text += `\n\n[Web-search output truncated to ${truncated.outputLines} of ${truncated.totalLines} lines (${formatSize(truncated.outputBytes)} of ${formatSize(truncated.totalBytes)}). Full output: ${fullOutputPath}]`;
+        }
+      }
+      return { content: [{ type: "text", text }], details: { truncated: truncated.truncated, fullOutputPath } };
+    },
   });
 }
 

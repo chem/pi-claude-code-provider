@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { ClaudeEventMapper } from "../../src/stream-events.ts";
+import { ClaudeEventMapper as EventMapper } from "../../src/stream-events.ts";
 import { createOutput } from "../../src/output.ts";
+import { PROVIDER_INIT_FIELDS, initRecord as claudeInitRecord } from "../support/claude-fixture.js";
+
+function makeMapper(stream, output, expectedTools, toolNames, onToolUse, onRateLimitNotice, onResponseAnnouncement) {
+    return new EventMapper({ stream, output, expectedTools, toolNames, onToolUse, onRateLimitNotice, onResponseAnnouncement });
+}
+
+function ClaudeEventMapper(...args) {
+    return makeMapper(...args);
+}
 const model = {
     id: "sonnet",
     name: "Sonnet",
@@ -17,25 +26,14 @@ const model = {
 };
 
 function initRecord(tools = [], mcpServers = []) {
-    return {
-        type: "system",
-        subtype: "init",
-        tools,
-        mcp_servers: mcpServers,
-        model: "claude-sonnet-5",
-        permissionMode: "dontAsk",
-        slash_commands: [],
-        skills: [],
-        plugins: [],
-        apiKeySource: "none",
-    };
+    return claudeInitRecord(PROVIDER_INIT_FIELDS, { tools, mcp_servers: mcpServers });
 }
 
 test("maps text, thinking, tool arguments, usage, and tool termination", async () => {
     const stream = createAssistantMessageEventStream();
     const output = createOutput(model);
     let toolUse = false;
-    const mapper = new ClaudeEventMapper(stream, output, new Set(["mcp__pi__calculate"]), new Map([["mcp__pi__calculate", "calculate"]]), () => {
+    const mapper = makeMapper(stream, output, new Set(["mcp__pi__calculate"]), new Map([["mcp__pi__calculate", "calculate"]]), () => {
         toolUse = true;
         mapper.completeToolUse();
     });

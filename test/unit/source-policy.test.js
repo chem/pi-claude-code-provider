@@ -29,6 +29,18 @@ test("finds static, side-effect, dynamic, and re-exported imports", () => {
   ]);
 });
 
+test("TypeScript parsing ignores lexical decoys and malformed import-like text", () => {
+  const fixtures = [
+    ['import "static"; /* import "comment" */', ["static"]],
+    ['const value = `import "template" ${import("nested")}`;', ["nested"]],
+    ['const pattern = /export .* from "regex"/; export { x } from "actual";', ["actual"]],
+    ['import("dynamic", { with: { type: "json" } }); loader.import("property");', ["dynamic"]],
+    ['import "unterminated', []],
+    ['export { value } from ; import(unknown);', []],
+  ];
+  for (const [source, expected] of fixtures) assert.deepEqual(importedSpecifiers(source), expected, source);
+});
+
 test("lists tracked and pending source while excluding ignored files", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-source-policy-"));
   try {

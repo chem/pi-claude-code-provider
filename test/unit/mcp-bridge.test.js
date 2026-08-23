@@ -59,6 +59,58 @@ test("Node bridge fails closed on malformed input and malformed catalogs", async
   }
 });
 
+test("bridge framing enforces its byte bound incrementally and handles stream boundaries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mcp-node-framing-"));
+  const catalog = join(directory, "tools.json");
+  await writeFile(catalog, "[]", { mode: 0o600 });
+  try {
+    const bounded = startBridge(catalog);
+    const empty = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "future", pad: "" });
+    const exact = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "future", pad: "x".repeat(1024 * 1024 - Buffer.byteLength(empty)) });
+    assert.equal(Buffer.byteLength(exact), 1024 * 1024);
+    bounded.child.stdin.write(`${exact}\n`);
+    const unicode = Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "initialize", params: { note: "雪" } })}\r\n${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} })}\n`);
+    const split = unicode.indexOf(Buffer.from("雪")) + 1;
+    bounded.child.stdin.write(unicode.subarray(0, split));
+    bounded.child.stdin.write(unicode.subarray(split));
+    bounded.child.stdin.end();
+    const records = await bounded.records;
+    assert.equal(records.find((record) => record.id === 1)?.error?.code, -32601);
+    assert.equal(records.find((record) => record.id === 2)?.result?.serverInfo?.name, "pi-tool-proposals");
+    assert.deepEqual(records.find((record) => record.id === 3)?.result?.tools, []);
+    assert.equal((await bounded.closed).code, 0);
+
+    const oversized = startBridge(catalog);
+    oversized.child.stdin.write(Buffer.alloc(1024 * 1024 + 1, 0x78));
+    const early = await Promise.race([oversized.closed, delay(1_000)]);
+    assert.ok(early, "bridge did not reject an oversized unterminated record while stdin stayed open");
+    assert.equal(early.code, 1);
+    const overflowRecords = await oversized.records;
+    assert.match(overflowRecords[0]?.error?.message ?? "", /exceeds the bridge limit/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function startBridge(catalog) {
+  const child = spawn(process.execPath, nodeFixtureArgs([BRIDGE_PATH]), {
+    env: { ...process.env, PI_CLAUDE_TOOL_CATALOG: catalog },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const values = [];
+  const parser = new JsonlParser((value) => values.push(value));
+  child.stdout.on("data", (chunk) => parser.push(chunk));
+  const records = new Promise((resolve) => child.stdout.on("end", () => {
+    parser.end();
+    resolve(values);
+  }));
+  const closed = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  return { child, records, closed };
+}
+
 async function exerciseBridge(bridge) {
   const directory = await mkdtemp(join(tmpdir(), `mcp-${bridge.name.toLowerCase()}-`));
   const catalog = join(directory, "tools.json");

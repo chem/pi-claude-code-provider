@@ -55,7 +55,7 @@ The package trusts the installed Pi and Claude executables, Node, the operating 
 
 Claude children receive an allowlisted environment for authentication, locale, proxies, shell discovery, and temporary storage. API keys, alternate routing, hooks, plugins, and arbitrary parent variables are not forwarded. Explicit settings suppress unmanaged user and project Claude customizations, and initialization verifies the resulting inventory. Administrator-managed Claude Code settings, hooks, and MCP policy are an organization-trusted boundary: the package cannot suppress them or prevent their startup effects before validation.
 
-Diagnostics and optional metrics contain bounded system, version, size, usage, and lifecycle facts. They exclude prompts, messages, tool arguments and results, queries, output, stderr, credentials, and temporary paths. Sanitized diagnostic paths outside home and temporary roots may remain, so reports must be inspected before sharing.
+Diagnostics and optional metrics contain bounded system, version, size, usage, and lifecycle facts. They exclude prompts, messages, tool arguments and results, queries, output, request stderr, credentials, and temporary paths. A failed bridge handshake can include a bounded, path-sanitized startup diagnostic derived from bridge stderr. Sanitized paths outside home and temporary roots may remain, so reports must be inspected before sharing.
 
 The package does not sandbox Pi, protect against a compromised local executable, make untrusted prompts safe, or prove undocumented server behavior is absent. Model-visible content is sent to Anthropic and inherits ordinary Claude Code confidentiality risks.
 
