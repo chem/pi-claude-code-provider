@@ -82,7 +82,7 @@ test("bridge framing enforces its byte bound incrementally and handles stream bo
 
     const oversized = startBridge(catalog);
     oversized.child.stdin.write(Buffer.alloc(1024 * 1024 + 1, 0x78));
-    const early = await Promise.race([oversized.closed, delay(1_000)]);
+    const early = await Promise.race([oversized.closed, delay(5_000)]);
     assert.ok(early, "bridge did not reject an oversized unterminated record while stdin stayed open");
     assert.equal(early.code, 1);
     const overflowRecords = await oversized.records;

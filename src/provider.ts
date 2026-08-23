@@ -125,9 +125,10 @@ export function createClaudeStream(
       };
 
       const terminateInBackground = (): void => {
-        void terminateCurrent().catch((error: unknown) => {
+        void terminateCurrent().catch(() => {
           errorCategory ??= "process_cleanup";
-          mapper?.fail(`Claude Code process cleanup failed: ${errorText(error)}`);
+          // The shared supervisor rejects wait() promptly on this same failure;
+          // the main catch path owns the complete, non-duplicated user message.
         });
       };
 
@@ -175,6 +176,8 @@ export function createClaudeStream(
         metrics.cacheWrite = output.usage.cacheWrite;
         metrics.inputTokens = output.usage.input;
         metrics.outputTokens = output.usage.output;
+        // Cache-hit percentage is cache reads divided by Claude's complete
+        // reported prompt usage, including new input and cache writes.
         const promptTokens = metrics.inputTokens + metrics.cacheRead + metrics.cacheWrite;
         metrics.cacheHitPercent = promptTokens > 0 ? Math.round((metrics.cacheRead * 10_000) / promptTokens) / 100 : undefined;
         metrics.stopReason = output.stopReason;
@@ -452,7 +455,9 @@ export function createClaudeStream(
           failure = appendCleanupFailure(failure, "private request", cleanupError);
         }
         if (mapper) {
-          if (mapper.isTerminal) output.errorMessage = failure;
+          if (mapper.isTerminal) {
+            output.errorMessage = output.errorMessage ? `${output.errorMessage}; ${failure}` : failure;
+          }
           else mapper.fail(failure, options?.signal?.aborted === true);
         }
         else {
@@ -505,11 +510,11 @@ function estimateTransportTokens(transcriptBytes: number, catalogBytes: number, 
 }
 
 function effectiveMaxOutputTokens(model: Model<Api>, requested: number | undefined): number {
-  const value = requested ?? model.maxTokens;
+  const value = Math.min(requested ?? model.maxTokens ?? 0, model.maxTokens ?? 0);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new ClaudeCodeError("max_tokens", "Pi maxTokens must be a positive integer");
   }
-  return Math.min(value, model.maxTokens);
+  return value;
 }
 
 function validateContextBudget(model: Model<Api>, estimatedInputTokens: number, maxOutput: number): void {
@@ -608,6 +613,9 @@ async function applyPayloadHook(model: Model<Api>, context: Context, options?: S
     messages: context.messages,
     tools: context.tools,
   };
+  // Pi supplies this callback even when no extension handler replaces the
+  // payload. Validate the effective post-callback object here; serialization
+  // remains a separate fail-closed defense for direct/internal callers.
   const replacement = await options?.onPayload?.(logical, model);
   return validateLogicalPayload(replacement === undefined ? logical : replacement);
 }

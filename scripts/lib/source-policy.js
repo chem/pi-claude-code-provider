@@ -1,7 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import ts from "../../tooling/node_modules/typescript/lib/typescript.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const typescriptEntry = fileURLToPath(new URL("../../tooling/node_modules/typescript/lib/typescript.js", import.meta.url));
+if (!existsSync(typescriptEntry)) {
+  throw new Error("TypeScript tooling is not installed; run: npm run setup:dev");
+}
+const ts = (await import(pathToFileURL(typescriptEntry).href)).default;
 
 export function repositoryFiles(root, paths) {
   const result = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ...paths], {
@@ -36,6 +42,7 @@ export function importedSpecifiers(source) {
   const add = (literal) => {
     if (!literal || !ts.isStringLiteralLike(literal)) return;
     const text = literal.getText(file);
+    // The parser can recover a node from an unterminated string; it is not an import.
     if (text.length < 2 || text.at(0) !== text.at(-1)) return;
     if (!specifiers.includes(literal.text)) specifiers.push(literal.text);
   };

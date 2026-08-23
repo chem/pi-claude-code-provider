@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-/** Proposal-only MCP bridge: expose Pi schemas, reject every tools/call, and stay dependency-free. */
+/**
+ * Proposal-only MCP bridge: expose Pi schemas, reject every tools/call, and stay dependency-free.
+ * Oversized input is fatal so rejected framing state is never reused.
+ */
 import { readFileSync, writeFileSync } from "node:fs";
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -34,7 +37,6 @@ process.stdin.on("data", (chunk) => {
     const record = pending.length === 0 ? segment : Buffer.concat([pending, segment], recordBytes);
     pending = Buffer.alloc(0);
     const content = record.at(-1) === 0x0d ? record.subarray(0, -1) : record;
-    if (content.length > MAX_REQUEST_BYTES) return failInput("MCP request exceeds the bridge limit");
     acceptLine(content.toString("utf8"));
     if (inputFailed) return;
     offset = newline + 1;

@@ -54,9 +54,11 @@ export function providerArgs(
   const imageInstruction = imageRefs
     ? ` Generated image attachments for image_attachment blocks: ${imageRefs}.`
     : "";
+  // Keep the growing attachment list after unchanged history so adding an image
+  // does not invalidate the transcript prefix Claude Code marks for caching.
   const prompt = [
-    ...(imageInstruction ? [{ type: "text" as const, text: imageInstruction.trim() }] : []),
     ...prepared.transcriptBlocks.map((text) => ({ type: "text" as const, text })),
+    ...(imageInstruction ? [{ type: "text" as const, text: imageInstruction.trim() }] : []),
   ];
   const bridge = bridgeLaunch(prepared.bunConfigPath);
   const mcpConfig = prepared.catalogPath

@@ -4,7 +4,11 @@ export interface ScriptLaunch {
   env: NodeJS.ProcessEnv;
 }
 
-/** Launch a JavaScript file under the Node or compiled Bun runtime hosting Pi. */
+/**
+ * Launch a JavaScript file under the Node or compiled Bun runtime hosting Pi.
+ * A standalone Pi needs BUN_BE_BUN to run the script rather than its embedded
+ * entry point; see DEVELOPING.md#compatibility-baseline for the preload hazard.
+ */
 export function scriptLaunch(
   script: string,
   args: readonly string[] = [],
@@ -21,6 +25,7 @@ export function scriptLaunch(
   };
 }
 
+/** Prevent BUN_BE_BUN from autoloading a working-directory bunfig into the bridge. */
 export const NEUTRAL_BUN_CONFIG = "# Intentionally empty: neutralizes working-directory bunfig preload.\n";
 
 export function needsBunConfig(bunVersion: string | undefined = process.versions.bun): boolean {

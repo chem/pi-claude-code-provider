@@ -29,6 +29,10 @@ test("uses only generated attachment references and replacement prompt", () => {
     assert.ok(args.includes("--no-session-persistence"));
     assert.ok(args.includes("dontAsk"));
     assert.ok(args.includes(""));
+    assert.deepEqual(prompt.map((block) => block.text), [
+        ...prepared.transcriptBlocks,
+        "Generated image attachments for image_attachment blocks: @./image.png.",
+    ]);
 });
 
 test("pins cache-stable Claude settings and omits fixed outer guidance", () => {

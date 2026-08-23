@@ -19,7 +19,7 @@ Validated initialization is the transport's response boundary: capabilities are 
 
 Each request serializes the effective system prompt, messages, and active tools into a versioned semantic transcript. Separate append-stable records preserve model-visible text, reasoning, tool calls, tool results, and images while omitting operational metadata, provider error messages, usage fields, signatures, and UI-only details. Tool-result `isError` state is preserved so historical failures remain meaningful. Historical tool results pair by `toolCallId`.
 
-Literal at signs are JSON Unicode-escaped because Claude expands `@path` syntax. Only provider-generated, validated images remain attachment references.
+Literal at signs are JSON Unicode-escaped because Claude expands `@path` syntax. Only provider-generated, validated images remain attachment references. Their dynamic reference list follows the append-stable transcript blocks so adding an image does not invalidate the reusable history prefix.
 
 Resending the complete current context keeps branches, compaction, reloads, and provider handoff Pi-authoritative without a second session store. It also adds framing tokens, cannot replay thinking signatures, and is not wire-equivalent to the Messages API. Claude controls prompt-cache keys and retention.
 
@@ -37,7 +37,7 @@ On POSIX, Claude runs as a detached process-group leader and cleanup targets the
 
 System prompts, transcript attachments, catalogs, and markers live in randomized temporary directories. POSIX uses mode 0700 directories and mode 0600 files. Windows relies on the per-user temporary root's ACL. Generated image names are content-addressed, bounded, and independent of user filenames.
 
-Cancellation is checked before launch, so an already-cancelled provider or web-search request starts no Claude process; after launch, cancellation terminates the owned process. Normal success, failure, timeout, and cancellation remove private request state. A bounded POSIX recovery pass removes only old, same-user, package-marked directories whose recorded processes are gone. Windows does not perform automatic stale recovery because Node provides no equivalent ownership check.
+Cancellation is checked before launch, so an already-cancelled provider or web-search request starts no Claude process; after launch, cancellation terminates the owned process. Normal success, failure, timeout, and cancellation remove private request state. If termination rejects before the child is known to have closed, supervision rejects promptly, quiesces the retained handle, and preserves the owned marker because process liveness is unknown; cleanup rejection after a known close does not require retention. A bounded POSIX recovery pass removes only old, same-user, package-marked directories whose recorded processes are gone. Windows does not perform automatic stale recovery because Node provides no equivalent ownership check.
 
 Protocol outcomes are published through `ClaudeEventMapper`, whose failure and completion gates are idempotent; setup failures that occur before a mapper exists are published directly by the provider. The request finalizer deliberately does not publish a second terminal event: it owns abort-listener disposal, last-chance safe directory cleanup, and exactly-once metrics. This keeps protocol mapping separate from process and storage finalization while preserving the rule that success follows cleanup.
 

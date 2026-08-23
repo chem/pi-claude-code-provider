@@ -1,6 +1,9 @@
 node_modules/
 package-lock.json
 !tooling/package-lock.json
+/caching/
+/IMPROVE.md
+/REVIEW.md
 .env
 .env.*
 !.env.example

@@ -74,6 +74,7 @@ export async function searchWithClaude(
   let terminationFailure: unknown;
   let processLivenessUnknown = false;
   let oversized = false;
+  let protocolError: Error | undefined;
   let protocol: SearchProtocol | undefined;
   const terminateCurrent = async (): Promise<void> => {
     if (!supervisor) return;
@@ -155,16 +156,15 @@ export async function searchWithClaude(
     signal?.addEventListener("abort", abortHandler, { once: true });
     if (signal?.aborted) abortHandler();
     await recordRuntimeChild(directory, child.pid ?? 0);
-    const currentProtocol = new SearchProtocol(
-      (phase) => {
+    const currentProtocol = new SearchProtocol({
+      onPhase: (phase) => {
         metrics.lastPhase = phase;
       },
       onRateLimitNotice,
-      [directory],
-    );
+      privatePaths: [directory],
+    });
     protocol = currentProtocol;
     let stderr = "";
-    let protocolError: Error | undefined;
     const stdoutDone = child.stdout
       ? finished(child.stdout, { cleanup: true }).catch(() => {})
       : Promise.resolve();
@@ -230,15 +230,26 @@ export async function searchWithClaude(
       : error === terminationFailure
         ? "process_cleanup"
         : searchErrorCategory(error, oversized);
-    primaryFailure = signal?.aborted ? "Web search was cancelled" : errorText(error);
+    const requestFailure = signal?.aborted
+      ? "Web search was cancelled"
+      : processFailure
+        ? processFailure.message
+        : oversized
+          ? "Claude web search exceeded the maximum captured response size"
+          : protocolError
+            ? protocolError.message
+            : errorText(error);
+    primaryFailure = requestFailure;
     if (error instanceof ProcessTerminationError) {
-      primaryFailure += "; private web-search runtime state was retained because process death could not be established";
+      primaryFailure += `; ${error.message}; private web-search runtime state was retained because process death could not be established`;
     }
-    try {
-      await terminateCurrent();
-    } catch (terminationError) {
-      if (terminationError !== error || signal?.aborted) {
-        primaryFailure = appendCleanupFailure(primaryFailure, "Claude Code process tree", terminationError);
+    if (!(error instanceof ProcessTerminationError)) {
+      try {
+        await terminateCurrent();
+      } catch (terminationError) {
+        if (terminationError !== error || signal?.aborted) {
+          primaryFailure = appendCleanupFailure(primaryFailure, "Claude Code process tree", terminationError);
+        }
       }
     }
     throw new Error(primaryFailure);
@@ -267,14 +278,14 @@ class SearchProtocol {
   private readonly onRateLimitNotice: RateLimitNoticeSink;
   private readonly privatePaths: readonly string[];
 
-  constructor(
-    onPhase?: (phase: string) => void,
-    onRateLimitNotice: RateLimitNoticeSink = () => {},
-    privatePaths: readonly string[] = [],
-  ) {
-    this.onPhase = onPhase;
-    this.onRateLimitNotice = onRateLimitNotice;
-    this.privatePaths = privatePaths;
+  constructor(options: {
+    onPhase?: (phase: string) => void;
+    onRateLimitNotice?: RateLimitNoticeSink;
+    privatePaths?: readonly string[];
+  } = {}) {
+    this.onPhase = options.onPhase;
+    this.onRateLimitNotice = options.onRateLimitNotice ?? (() => {});
+    this.privatePaths = options.privatePaths ?? [];
   }
 
   get isInitialized(): boolean {

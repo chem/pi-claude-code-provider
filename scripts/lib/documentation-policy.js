@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 export function documentationPolicyErrors(root, markdownFiles, verifiedVersions) {
   const errors = [];
@@ -11,12 +11,12 @@ export function documentationPolicyErrors(root, markdownFiles, verifiedVersions)
       const [relativePath, anchor] = reference.split("#", 2);
       const target = resolve(dirname(path), decodeURIComponent(relativePath));
       if (!existsSync(target)) {
-        errors.push(`Broken Markdown link in ${path.slice(root.length + 1)}: ${reference}`);
+        errors.push(`Broken Markdown link in ${relative(root, path)}: ${reference}`);
         continue;
       }
       if (anchor && target.endsWith(".md")) {
         const anchors = markdownAnchors(readFileSync(target, "utf8"));
-        if (!anchors.has(anchor)) errors.push(`Broken Markdown anchor in ${path.slice(root.length + 1)}: ${reference}`);
+        if (!anchors.has(anchor)) errors.push(`Broken Markdown anchor in ${relative(root, path)}: ${reference}`);
       }
     }
   }

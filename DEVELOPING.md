@@ -12,6 +12,8 @@ npm test
 
 Do not run `npm install` at the repository root. The package has no installed dependencies and must not contain root `node_modules` or a root lockfile. `setup:dev` installs the isolated, locked `tooling/` package containing the TypeScript parser/compiler and Node declarations used by source-policy checks and typechecking. Its ignored `node_modules/` is generated development state, not published runtime code. Pi loads the TypeScript extension directly; there is no runtime build.
 
+When npm and standalone Pi installations coexist, development uses whichever `pi` resolves first on `PATH`. Put the npm installation's bin directory first for `npm run check` and `npm test`; verify it with `command -v pi` on POSIX or `where pi` on Windows. Keep the development host npm-based, and use `PI_CLAUDE_CODE_PROVIDER_PI_BIN` only to select a standalone executable for the live bridge lane.
+
 To load a local checkout:
 
 ```bash

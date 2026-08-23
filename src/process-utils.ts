@@ -47,6 +47,9 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
     resolveResult = resolve;
     rejectResult = reject;
   });
+  // Supervision starts before callers can always attach wait(); keep that brief
+  // window from turning a real, still-observable rejection into an unhandled one.
+  void result.catch(() => {});
 
   const clearTimers = (): void => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -54,7 +57,19 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
   };
 
   const terminate = (): Promise<void> => {
-    terminationPromise ??= (options.terminate ?? terminateProcessGroup)(child);
+    terminationPromise ??= (options.terminate ?? terminateProcessGroup)(child).catch((cause: unknown) => {
+      // Cleanup can reject after close (for example, an injected post-exit
+      // diagnostic). Only a child not known to have closed leaves liveness unknown.
+      if (child.exitCode !== null || child.signalCode !== null) throw cause;
+      const failure = cause instanceof ProcessTerminationError ? cause : new ProcessTerminationError(cause);
+      if (!settled) {
+        settled = true;
+        clearTimers();
+        quiesceChild(child);
+        rejectResult?.(failure);
+      }
+      throw failure;
+    });
     return terminationPromise;
   };
 
@@ -65,14 +80,7 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
     // A timeout or pipe error has already established the primary failure, but
     // platform process cleanup must still be observed to avoid an unhandled rejection.
     void terminate().catch((terminationError: unknown) => {
-      const failure = new ProcessTerminationError(terminationError);
-      options.onFailure(failure);
-      if (!settled) {
-        settled = true;
-        clearTimers();
-        quiesceChild(child);
-        rejectResult?.(failure);
-      }
+      options.onFailure(terminationError instanceof Error ? terminationError : new Error(String(terminationError)));
     });
   };
   const onChildError = (error: Error): void => {
@@ -130,17 +138,20 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
 }
 
 function quiesceChild(child: ChildProcess): void {
-  child.stdin?.destroy();
-  child.stdout?.destroy();
-  child.stderr?.destroy();
   child.stdin?.removeAllListeners();
   child.stdout?.removeAllListeners();
   child.stderr?.removeAllListeners();
   child.removeAllListeners("error");
   child.removeAllListeners("close");
-  // A retained ChildProcess can still report a late spawn/handle error. Keep a
-  // closure-free sink so quiescing cannot turn that into an uncaught event.
+  // A retained process or stream can still report a late handle error. Install
+  // closure-free sinks before destroy so quiescing cannot make it uncaught.
+  child.stdin?.on("error", ignoreRetainedChildError);
+  child.stdout?.on("error", ignoreRetainedChildError);
+  child.stderr?.on("error", ignoreRetainedChildError);
   child.on("error", ignoreRetainedChildError);
+  child.stdin?.destroy();
+  child.stdout?.destroy();
+  child.stderr?.destroy();
 }
 
 function ignoreRetainedChildError(): void {}

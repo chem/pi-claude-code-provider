@@ -271,7 +271,11 @@ test("provider settles once and retains marked state when process death is unkno
             { supervise: superviseUnknown },
         )(model, context, { timeoutMs: 1_000 });
         const events = [];
-        for await (const event of stream) events.push(event.type);
+        let publishedFailure;
+        for await (const event of stream) {
+            events.push(event.type);
+            if (event.type === "error") publishedFailure = event.error.errorMessage;
+        }
         const result = await Promise.race([
             stream.result(),
             new Promise((_, reject) => setTimeout(() => reject(new Error("provider stream did not settle")), 500)),
@@ -280,7 +284,11 @@ test("provider settles once and retains marked state when process death is unkno
         assert.equal(events.filter((type) => type === "error" || type === "done").length, 1);
         const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "process_cleanup" && entry.cleanupComplete === false);
         assert.equal(metrics.cleanupComplete, false);
+        assert.match(publishedFailure ?? "", /no protocol activity for 30ms/);
+        assert.match(result.errorMessage ?? "", /no protocol activity for 30ms/);
+        assert.match(result.errorMessage ?? "", /synthetic stubborn provider EPERM/);
         assert.match(result.errorMessage ?? "", /runtime state was retained/);
+        assert.equal((result.errorMessage?.match(/synthetic stubborn provider EPERM/g) ?? []).length, 1);
         const directories = (await readdir(root)).filter((name) => name.startsWith("pi-claude-code-provider-request-"));
         assert.equal(directories.length, 1);
         const marker = JSON.parse(await readFile(join(root, directories[0], ".pi-claude-code-provider-runtime.json"), "utf8"));
@@ -337,6 +345,17 @@ process.stdin.on("end", () => {
         await rm(directory, { recursive: true, force: true });
         await rm(fake.dir, { recursive: true, force: true });
     }
+});
+test("provider rejects a model without a usable output maximum before claiming a launch", async () => {
+    let claims = 0;
+    const invalidModel = { ...model, maxTokens: undefined };
+    const result = await createClaudeStream(
+        { executable: "/does/not/matter", version: "test", subscriptionType: "pro" },
+        { claimLaunch: async () => { claims++; } },
+    )(invalidModel, context, { maxTokens: 2_048 }).result();
+    assert.equal(result.stopReason, "error");
+    assert.match(result.errorMessage ?? "", /maxTokens must be a positive integer/);
+    assert.equal(claims, 0);
 });
 test("provider rejects a successful result followed by nonzero exit", async () => {
     const fake = await fakeClaude(`

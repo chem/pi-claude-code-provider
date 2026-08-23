@@ -54,6 +54,8 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
 
   pi.on("session_start", (_event, ctx) => {
     searchOutputs.open();
+    // The provider starts a process per tool round-trip; session scope prevents
+    // Claude's repeated notice from surfacing throughout one Pi turn.
     activeRateLimitNotify = createRateLimitNotifier((message) => ctx.ui.notify(message, "warning"));
     if (currentPlatform.warning) ctx.ui.notify(`${NOTICE_PREFIX} ${currentPlatform.warning}`, "warning");
     if (searchRegistrationAttempted) return;
@@ -100,6 +102,8 @@ function registerDoctorCommand(pi: ExtensionAPI, runtimeCleanup: RuntimeCleanupR
         }
         const currentPlatform = platformStatus();
         const piStatus = versionStatus("Pi", VERSION, VERIFIED_VERSIONS.pi);
+        // Version and path checks can pass even when the proposal bridge cannot
+        // start, so prove it with a real dependency-free handshake.
         const bridgeProbe = await probeBridge().catch((error: unknown) => ({
           ok: false,
           argv: bridgeArgv(),
@@ -183,6 +187,8 @@ function createSearchOutputOwner() {
         throw error;
       }
     })();
+    // Track before awaiting anything so shutdown owns a directory whose
+    // asynchronous creation has begun but has not completed.
     pending.add(retention);
     void retention.finally(() => pending.delete(retention)).catch(() => undefined);
     return retention;

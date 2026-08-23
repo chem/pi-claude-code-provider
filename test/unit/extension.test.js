@@ -361,6 +361,11 @@ test("an occupied permanent web-search name is preserved with a prefixed warning
         assert.ok(collision);
         assert.equal(collision.level, "warning");
         assert.match(collision.message, /^\[pi-claude-code-provider\]/);
+        await pi.handlers.get("session_shutdown")[0]({}, {});
+        const later = [];
+        sessionStart[0]({}, { ui: { notify(message, level) { later.push({ message, level }); } } });
+        assert.equal(pi.tools.get("pi_claude_code_provider_web_search"), existingSearch);
+        assert.equal(later.some(({ message }) => message.includes("tool name is already occupied")), false);
     }
     finally {
         if (original === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;

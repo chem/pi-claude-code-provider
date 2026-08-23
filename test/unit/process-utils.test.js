@@ -47,8 +47,8 @@ test("supervisor reports only the first pipe failure", async () => {
     supervisor.dispose();
     assert.deepEqual(failures, ["Claude Code stdin failed: EPIPE"]);
 });
-test("supervisor rejects and quiesces when termination cannot establish process death", { skip: process.platform === "win32" }, async () => {
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+test("supervisor rejects and quiesces when termination cannot establish process death", async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
     const failures = [];
     const supervisor = superviseProcess(child, {
         idleTimeoutMs: 1_000,
@@ -69,7 +69,31 @@ test("supervisor rejects and quiesces when termination cannot establish process 
         assert.ok(failures[1] instanceof ProcessTerminationError);
         assert.equal(child.stdout.destroyed, true);
         assert.equal(child.stderr.destroyed, true);
-        assert.doesNotThrow(() => process.kill(child.pid, 0));
+        assert.equal(child.exitCode, null);
+    } finally {
+        supervisor.dispose();
+        await terminateProcessGroup(child);
+    }
+});
+test("caller-initiated termination failure also rejects supervisor wait promptly", async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const supervisor = superviseProcess(child, {
+        idleTimeoutMs: 1_000,
+        totalTimeoutMs: 1_000,
+        onFailure() {},
+        terminate: async () => { throw new Error("synthetic direct terminator EPERM"); },
+    });
+    try {
+        await assert.rejects(supervisor.terminate(), ProcessTerminationError);
+        await assert.rejects(
+            Promise.race([
+                supervisor.wait(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("supervisor did not settle")), 500)),
+            ]),
+            /liveness is unknown.*direct terminator EPERM/,
+        );
+        assert.equal(child.exitCode, null);
+        assert.equal(child.stdout.destroyed, true);
     } finally {
         supervisor.dispose();
         await terminateProcessGroup(child);

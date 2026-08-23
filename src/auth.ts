@@ -130,10 +130,12 @@ export function validateClaudeCapabilities(helpOutput: string): void {
 }
 
 function hasCliOption(helpOutput: string, option: string): boolean {
-  const bracketedSystemPrompt = /(?:^|[\s,])--system-prompt\[-file\](?=$|[\s,=<\[])/m.test(helpOutput);
-  if (bracketedSystemPrompt && (option === "--system-prompt" || option === "--system-prompt-file")) return true;
   const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[\\s,])${escaped}(?=$|[\\s,=<\\[])`, "m").test(helpOutput);
+  if (new RegExp(`(?:^|[\\s,])${escaped}(?=$|[\\s,=<\\[])`, "m").test(helpOutput)) return true;
+  // Only the file variant needs special handling for Claude 2.1.241's
+  // shorthand; the generic matcher recognizes its --system-prompt prefix.
+  return option === "--system-prompt-file" &&
+    /(?:^|[\s,])--system-prompt\[-file\](?=$|[\s,=<\[])/m.test(helpOutput);
 }
 
 async function resolveExecutable(configured: string, label: string, code: string): Promise<string> {

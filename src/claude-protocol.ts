@@ -9,9 +9,12 @@ export interface ClaudeInitializationExpectation {
 export interface RateLimitNotice {
   status: "allowed_warning" | "rejected";
   rateLimitType: string;
+  /** Claude reports utilization as a fraction from 0 through 1. */
   utilization?: number;
+  /** Reset instant normalized from Unix seconds to JavaScript milliseconds. */
   resetsAt?: number;
   overageStatus?: "allowed_warning" | "rejected";
+  /** A separately reported overage reset, also normalized to milliseconds. */
   overageResetsAt?: number;
   overageDisabledReason?: string;
   isUsingOverage?: boolean;
@@ -22,11 +25,15 @@ export type RateLimitNoticeSink = (notice: RateLimitNotice) => void;
 const EPOCH_MILLISECONDS_THRESHOLD = 100_000_000_000;
 
 export function parseRateLimitNotice(info: unknown): RateLimitNotice | undefined {
+  // Rate-limit events are advisory; malformed details must not fail an
+  // otherwise valid provider or web-search request.
   if (!info || typeof info !== "object" || Array.isArray(info)) return undefined;
   const rate = info as Record<string, unknown>;
   const primaryStatus = alertStatus(rate.status);
   const overageStatus = alertStatus(rate.overageStatus);
   const usingOverage = rate.isUsingOverage === true;
+  // org_level_disabled is the normal repeated state when usage credits are
+  // unavailable, so overage constrains a request only with plan rejection/use.
   const overageBlocking = overageStatus === "rejected" && (primaryStatus === "rejected" || usingOverage);
   if (!primaryStatus && !overageBlocking) return undefined;
   const status = primaryStatus === "rejected" || overageBlocking ? "rejected" : "allowed_warning";
@@ -100,8 +107,8 @@ export function validateClaudeInitialization(value: unknown, expectation: Claude
     if (!Array.isArray(record.mcp_server_errors)) {
       throw new ClaudeCodeError("protocol_init", "Claude initialization contained invalid MCP server errors");
     }
-    const details = record.mcp_server_errors.map((value) => mcpErrorDetail(value, expectation.privatePaths ?? []));
-    if (details.length > 0) {
+    if (record.mcp_server_errors.length > 0) {
+      const details = record.mcp_server_errors.map((value) => mcpErrorDetail(value, expectation.privatePaths ?? []));
       throw new ClaudeCodeError("isolation_mcp", `Claude Code reported MCP initialization errors: ${details.join("; ")}`);
     }
   }
@@ -139,11 +146,14 @@ function safeDiagnostic(value: string, privatePaths: readonly string[], limit: n
 
 function validTimestamp(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  // The current wire value is Unix seconds. Avoid double conversion if a future
+  // CLI or intermediary supplies a plausible epoch-millisecond value.
   const milliseconds = value >= EPOCH_MILLISECONDS_THRESHOLD ? value : value * 1000;
   return !Number.isSafeInteger(milliseconds) || Number.isNaN(new Date(milliseconds).getTime()) ? undefined : milliseconds;
 }
 
 function validUtilization(value: unknown): number | undefined {
+  // Keep the wire fraction intact; rendering is the only percentage boundary.
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
 }
 

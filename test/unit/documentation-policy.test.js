@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 import { documentationPolicyErrors } from "../../scripts/lib/documentation-policy.js";
 
@@ -17,7 +17,7 @@ test("documentation policy validates local links, anchors, and verified versions
     assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { pi: "1.2.3", claude: "4.5.6" }), []);
 
     await writeFile(index, "[missing](MISSING.md) [anchor](TARGET.md#missing) [baseline](DEVELOPING.md#compatibility-baseline)\n");
-    assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { pi: "1.2.3", claude: "9.9.9" }), [
+    assert.deepEqual(documentationPolicyErrors(`${root}${sep}`, [index, target, compatibility], { pi: "1.2.3", claude: "9.9.9" }), [
       "Broken Markdown link in README.md: MISSING.md",
       "Broken Markdown anchor in README.md: TARGET.md#missing",
       "DEVELOPING.md omits verified version 9.9.9",

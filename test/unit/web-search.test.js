@@ -130,9 +130,11 @@ test("web search rejects promptly and retains marked state when process death is
     const originalTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = root;
     const fake = await fakeSearch(`setInterval(() => {}, 1000);`);
+    const controller = new AbortController();
     let capturedChild;
     const superviseUnknown = (child, options) => {
         capturedChild = child;
+        setImmediate(() => controller.abort());
         return superviseProcess(child, {
             ...options,
             terminate: async () => { throw new Error("synthetic stubborn search EPERM"); },
@@ -143,12 +145,18 @@ test("web search rejects promptly and retains marked state when process death is
             Promise.race([
                 searchWithClaude(
                     { executable: fake.executable, version: "test", subscriptionType: "pro" },
-                    { query: "query" },
-                    { timeoutMs: 30, supervise: superviseUnknown },
+                    { query: "query", signal: controller.signal },
+                    { timeoutMs: 1_000, supervise: superviseUnknown },
                 ),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("web search did not settle")), 500)),
             ]),
-            /runtime state was retained/,
+            (error) => {
+                assert.match(error.message, /Web search was cancelled/);
+                assert.match(error.message, /synthetic stubborn search EPERM/);
+                assert.match(error.message, /runtime state was retained/);
+                assert.equal((error.message.match(/synthetic stubborn search EPERM/g) ?? []).length, 1);
+                return true;
+            },
         );
         const metrics = getLastSearchMetrics();
         assert.equal(metrics.errorCategory, "process_cleanup");
