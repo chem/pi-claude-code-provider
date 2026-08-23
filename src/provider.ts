@@ -456,6 +456,9 @@ export function createClaudeStream(
         }
         if (mapper) {
           if (mapper.isTerminal) {
+            // A consumer may already have observed this terminal (notably on
+            // abort), so the append is best-effort; finalized metrics are the
+            // authoritative cleanup-status record.
             output.errorMessage = output.errorMessage ? `${output.errorMessage}; ${failure}` : failure;
           }
           else mapper.fail(failure, options?.signal?.aborted === true);

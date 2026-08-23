@@ -731,6 +731,67 @@ process.stdin.on("end", () => {
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
+test("provider settles and retains marked state when tool-handoff termination fails", { skip: process.platform === "win32" }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "provider-tool-cleanup-failure-"));
+    const originalTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = root;
+    const fake = await fakeClaude(`
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(toolInit)}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"message_start",message:{id:"msg_tool_cleanup",model:"claude-sonnet-5",usage:{}}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"toolu_cleanup",name:"mcp__pi__read",input:{}}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",index:0,delta:{type:"input_json_delta",partial_json:'{"path":"package.json"}'}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"content_block_stop",index:0}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"message_delta",delta:{stop_reason:"tool_use"}}}) + "\\n");
+  process.stdout.write(JSON.stringify({type:"stream_event",event:{type:"message_stop"}}) + "\\n");
+  setInterval(() => {}, 1000);
+});`);
+    let capturedChild;
+    const superviseCleanupFailure = (child, options) => {
+        capturedChild = child;
+        return superviseProcess(child, {
+            ...options,
+            terminate: async () => { throw new Error("synthetic tool handoff EPERM"); },
+        });
+    };
+    try {
+        const stream = createClaudeStream(
+            { executable: fake.executable, version: "test", subscriptionType: "pro" },
+            { supervise: superviseCleanupFailure },
+        )(model, toolContext, { reasoning: "medium" });
+        const events = [];
+        let publishedFailure;
+        for await (const event of stream) {
+            events.push(event.type);
+            if (event.type === "error") publishedFailure = event.error.errorMessage;
+        }
+        const result = await Promise.race([
+            stream.result(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("tool-handoff stream did not settle")), 500)),
+        ]);
+        assert.equal(result.stopReason, "error");
+        assert.equal(events.filter((type) => type === "error" || type === "done").length, 1);
+        assert.equal(publishedFailure, result.errorMessage);
+        assert.match(result.errorMessage ?? "", /synthetic tool handoff EPERM/);
+        assert.match(result.errorMessage ?? "", /runtime state was retained/);
+        const metrics = await waitForRequestMetrics((entry) =>
+            entry.errorCategory === "process_cleanup" && entry.cleanupComplete === false && entry.terminationExpected === true
+        );
+        assert.equal(metrics.stopReason, "error");
+        const directories = (await readdir(root)).filter((name) => name.startsWith("pi-claude-code-provider-request-"));
+        assert.equal(directories.length, 1);
+        const marker = JSON.parse(await readFile(join(root, directories[0], ".pi-claude-code-provider-runtime.json"), "utf8"));
+        assert.equal(marker.childPid, capturedChild.pid);
+        assert.doesNotThrow(() => process.kill(capturedChild.pid, 0));
+    }
+    finally {
+        if (capturedChild) await terminateProcessGroup(capturedChild);
+        if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
+        await rm(root, { recursive: true, force: true });
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
 test("provider accepts an exit-143 tool handoff when Claude emits no acknowledgement", { skip: process.platform === "win32" }, async () => {
     const fake = await fakeClaude(`
 process.on("SIGTERM", () => process.exit(143));
