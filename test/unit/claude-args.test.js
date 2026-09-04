@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BRIDGE_PATH, baseClaudeArgs, providerArgs } from "../../src/claude-args.ts";
+import { EXPECTED_MODEL_RESOLUTIONS } from "../../src/compatibility.ts";
 import { NEUTRAL_BUN_CONFIG, needsBunConfig, scriptLaunch } from "../../src/host-runtime.ts";
 test("uses only generated attachment references and replacement prompt", () => {
     const prepared = {
@@ -70,7 +71,7 @@ test("maps the Fable 5.1 picker alias to Claude Code's canonical model name", ()
         imageBytes: 0,
     };
     const { args } = providerArgs(prepared, "fable-5.1", "medium");
-    assert.equal(args[args.indexOf("--model") + 1], "claude-fable-5-1");
+    assert.equal(args[args.indexOf("--model") + 1], EXPECTED_MODEL_RESOLUTIONS["fable-5.1"]);
     assert.equal(args.includes("fable-5.1"), false);
 });
 
