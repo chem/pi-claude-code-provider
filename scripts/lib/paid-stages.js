@@ -17,9 +17,10 @@ export const PAID_STAGES = {
   full: { label: "full live", cap: 28, script: "live-test.js", args: ["--full"], toolBearing: true },
   "post-tools": { label: "post-tool live", cap: 6, script: "live-test.js", args: ["--post-tools"], toolBearing: true },
   cache: { label: "cache", cap: 3, script: "live-test.js", args: ["--cache"] },
-  // Fable 5 availability and included quota vary by subscription tier, so its
-  // one-launch case is opt-in and excluded from the blocking gate.
+  // Fable availability and included quota vary by subscription tier, so these
+  // one-launch cases are opt-in and excluded from the blocking gate.
   fable: { label: "fable model", cap: 1, script: "model-matrix.js", args: ["--case", "fable:medium"] },
+  "fable-5.1": { label: "fable 5.1 model", cap: 1, script: "model-matrix.js", args: ["--case", "fable-5.1:medium"] },
   opus: { label: "opus model", cap: 1, script: "model-matrix.js", args: ["--case", "opus:medium"] },
   matrix: { label: "model matrix", cap: 20, script: "model-matrix.js", args: [] },
 };

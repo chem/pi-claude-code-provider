@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add a `fable-5.1` picker alias that invokes Claude Code's canonical `claude-fable-5-1` model name, with a separate opt-in paid validation gate.
+
 ## [0.1.4] - 2026-08-23
 
 ### Fixed

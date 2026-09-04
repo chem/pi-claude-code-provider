@@ -9,7 +9,8 @@ test("verified versions report verified status without a warning", () => {
 });
 
 test("defines concrete compatibility targets for every picker alias", () => {
-  assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), ["default", "sonnet", "fable", "opus", "haiku"]);
+  assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), ["default", "sonnet", "fable", "fable-5.1", "opus", "haiku"]);
+  assert.equal(EXPECTED_MODEL_RESOLUTIONS["fable-5.1"], "claude-fable-5-1");
   assert.equal(EXPECTED_MODEL_RESOLUTIONS.opus, "claude-opus-5");
   assert.match(EXPECTED_MODEL_RESOLUTIONS.haiku, /^claude-haiku-/);
 });

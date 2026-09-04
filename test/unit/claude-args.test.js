@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BRIDGE_PATH, baseClaudeArgs, providerArgs } from "../../src/claude-args.ts";
+import { EXPECTED_MODEL_RESOLUTIONS } from "../../src/compatibility.ts";
 import { NEUTRAL_BUN_CONFIG, needsBunConfig, scriptLaunch } from "../../src/host-runtime.ts";
 test("uses only generated attachment references and replacement prompt", () => {
     const prepared = {
@@ -55,6 +56,23 @@ test("pins cache-stable Claude settings and omits fixed outer guidance", () => {
     };
     const generated = providerArgs(prepared, "sonnet", "low");
     assert.deepEqual(generated.prompt, [{ type: "text", text: prepared.transcriptBlocks[0] }]);
+});
+
+test("maps the Fable 5.1 picker alias to Claude Code's canonical model name", () => {
+    const prepared = {
+        directory: "/tmp/private",
+        transcriptBlocks: ['{"protocol":"test"}'],
+        attachmentPaths: [],
+        systemPromptPath: "/tmp/private/system-prompt.txt",
+        catalogPath: undefined,
+        toolNames: new Map(),
+        transcriptBytes: 1,
+        catalogBytes: 0,
+        imageBytes: 0,
+    };
+    const { args } = providerArgs(prepared, "fable-5.1", "medium");
+    assert.equal(args[args.indexOf("--model") + 1], EXPECTED_MODEL_RESOLUTIONS["fable-5.1"]);
+    assert.equal(args.includes("fable-5.1"), false);
 });
 
 test("proposal MCP server launches the bridge through the hosting runtime", () => {

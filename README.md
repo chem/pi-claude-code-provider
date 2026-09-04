@@ -35,7 +35,7 @@ Add `-l` for a project-local installation. Pi loads project packages only after 
 
 ## Use
 
-Open `/model` and choose one of these aliases: `default`, `sonnet`, `fable`, `opus`, or `haiku`. Pi displays them with the provider name, for example `sonnet [pi-claude-code-provider]`.
+Open `/model` and choose one of these aliases: `default`, `sonnet`, `fable`, `fable-5.1`, `opus`, or `haiku`. Pi displays them with the provider name, for example `sonnet [pi-claude-code-provider]`.
 
 To select one directly:
 
@@ -47,7 +47,7 @@ The same canonical reference works from the command line with `pi --model pi-cla
 
 Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability.
 
-The `fable` alias is offered and separately testable, but it is excluded from the paid release gate. Fable 5 availability, included allocation, and billing vary by subscription tier. It otherwise follows the standard alias path wherever the account allows it. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
+The `fable` and `fable-5.1` aliases are offered and separately testable, but they are excluded from the paid release gate. `fable-5.1` is translated to Claude Code's canonical `claude-fable-5-1` model name. Fable availability, included allocation, and billing vary by subscription tier. The aliases otherwise follow the standard model path wherever the account allows them. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
 
 **Model identity:** self-identification is generated text, not routing metadata, and Pi's coding-tool prompt and schemas can make Claude name an older Sonnet even when Claude Code served Opus. Use the assistant message's `responseModel` field in Pi's JSON output for the served model; Pi's status line shows the requested alias.
 

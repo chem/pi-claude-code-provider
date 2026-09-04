@@ -45,6 +45,10 @@ export function baseClaudeArgs(): string[] {
   ];
 }
 
+function claudeModelArg(model: string): string {
+  return model === "fable-5.1" ? "claude-fable-5-1" : model;
+}
+
 export function providerArgs(
   prepared: PreparedRequest,
   model: string,
@@ -84,7 +88,7 @@ export function providerArgs(
     mcpConfig,
     "--tools",
     "",
-    ...(model === "default" ? [] : ["--model", model]),
+    ...(model === "default" ? [] : ["--model", claudeModelArg(model)]),
     "--effort",
     effort,
     "--input-format",
