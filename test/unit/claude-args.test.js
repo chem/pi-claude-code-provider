@@ -57,6 +57,23 @@ test("pins cache-stable Claude settings and omits fixed outer guidance", () => {
     assert.deepEqual(generated.prompt, [{ type: "text", text: prepared.transcriptBlocks[0] }]);
 });
 
+test("maps the Fable 5.1 picker alias to Claude Code's canonical model name", () => {
+    const prepared = {
+        directory: "/tmp/private",
+        transcriptBlocks: ['{"protocol":"test"}'],
+        attachmentPaths: [],
+        systemPromptPath: "/tmp/private/system-prompt.txt",
+        catalogPath: undefined,
+        toolNames: new Map(),
+        transcriptBytes: 1,
+        catalogBytes: 0,
+        imageBytes: 0,
+    };
+    const { args } = providerArgs(prepared, "fable-5.1", "medium");
+    assert.equal(args[args.indexOf("--model") + 1], "claude-fable-5-1");
+    assert.equal(args.includes("fable-5.1"), false);
+});
+
 test("proposal MCP server launches the bridge through the hosting runtime", () => {
     const prepared = {
         directory: "/tmp/private",

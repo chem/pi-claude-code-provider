@@ -24,7 +24,7 @@ assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), advertisedModels, "com
 // Fable 5 availability and included quota vary by subscription tier. It is
 // intentionally opt-in and excluded from the blocking gate; the standalone
 // case remains selectable for accounts with Fable access.
-const ungatedModels = new Set(["fable"]);
+const ungatedModels = new Set(["fable", "fable-5.1"]);
 const mediumOnlyModels = advertisedModels.filter((model) => !effortModels.includes(model));
 const coreCases = [
     { model: "sonnet", effort: "medium" },

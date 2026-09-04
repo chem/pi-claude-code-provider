@@ -20,6 +20,7 @@ export const PAID_STAGES = {
   // Fable 5 availability and included quota vary by subscription tier, so its
   // one-launch case is opt-in and excluded from the blocking gate.
   fable: { label: "fable model", cap: 1, script: "model-matrix.js", args: ["--case", "fable:medium"] },
+  "fable-next": { label: "fable 5.1 model", cap: 1, script: "model-matrix.js", args: ["--case", "fable-5.1:medium"] },
   opus: { label: "opus model", cap: 1, script: "model-matrix.js", args: ["--case", "opus:medium"] },
   matrix: { label: "model matrix", cap: 20, script: "model-matrix.js", args: [] },
 };
