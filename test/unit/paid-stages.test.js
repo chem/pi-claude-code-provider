@@ -18,8 +18,25 @@ test("a tool-bearing stage can afford the launches a tool round trip costs", () 
     }
 });
 
+test("keeps both Fable stages opt-in, one-launch, and accurately targeted", () => {
+    assert.deepEqual(PAID_STAGES.fable, {
+        label: "fable model",
+        cap: 1,
+        script: "model-matrix.js",
+        args: ["--case", "fable:medium"],
+    });
+    assert.deepEqual(PAID_STAGES["fable-5.1"], {
+        label: "fable 5.1 model",
+        cap: 1,
+        script: "model-matrix.js",
+        args: ["--case", "fable-5.1:medium"],
+    });
+    assert.equal(RELEASE_ORDER.includes("fable"), false);
+    assert.equal(RELEASE_ORDER.includes("fable-5.1"), false);
+});
+
 test("documented launch caps match the runner and each other", async () => {
-    const rows = [...(await readFile(developing, "utf8")).matchAll(/^\| `npm run test:paid:([a-z-]+)` \| (\d+) \|$/gm)]
+    const rows = [...(await readFile(developing, "utf8")).matchAll(/^\| `npm run test:paid:([a-z0-9.-]+)` \| (\d+) \|$/gm)]
         .map(([, name, cap]) => [name, Number(cap)]);
     assert.ok(rows.length > 0, "DEVELOPING.md documents no paid launch caps");
     const documented = new Map(rows);

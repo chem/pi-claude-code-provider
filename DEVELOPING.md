@@ -64,7 +64,7 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 | `npm run test:paid:full` | 28 |
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
-| `npm run test:paid:fable-next` | 1 |
+| `npm run test:paid:fable-5.1` | 1 |
 | `npm run test:paid:opus` | 1 |
 | `npm run test:paid:matrix` | 20 |
 | `npm run test:paid:release` | 57 |
@@ -73,7 +73,7 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 
 Both bridge lanes are required, and `test:paid:release` runs both. A `--no-tools` turn passes even when the proposal bridge never starts, so only a turn that actually round-trips a tool distinguishes a working bridge from a broken one. `/pi-claude-code-provider-doctor` performs the same handshake without consuming quota.
 
-The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable models are technically selectable, but validating them on Pro can consume separate paid credits rather than the included subscription allocation, so they are deliberately excluded from the release matrix; the blocking Sonnet and Opus cases already exercise the shared transport. `npm run test:paid:fable` and `npm run test:paid:fable-next` remain opt-in one-launch cases for a maintainer who separately authorizes that spend. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable models are technically selectable, but validating them on Pro can consume separate paid credits rather than the included subscription allocation, so they are deliberately excluded from the release matrix; the blocking Sonnet and Opus cases already exercise the shared transport. `npm run test:paid:fable` and `npm run test:paid:fable-5.1` remain opt-in one-launch cases for a maintainer who separately authorizes that spend. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization. Claude Code 2.1.233 introduced a changing `<total_tokens>` reminder that broke reuse across fresh print-mode processes; the provider pins `totalTokensReminder: "off"` following [bcherny's maintainer guidance](https://github.com/anthropics/claude-code/issues/81259#issuecomment-5311888970). The setting is otherwise undocumented, so do not remove it without a replacement cache probe and new upstream guidance.
 

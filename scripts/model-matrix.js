@@ -8,7 +8,7 @@ import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
 import { consumeJsonl, superviseLiveProcess } from "./lib/live-process.js";
 import { piLaunch } from "./lib/pi-installation.js";
-import { servedContextWindowMatches } from "./lib/model-matrix-policy.js";
+import { planModelMatrixCases, servedContextWindowMatches } from "./lib/model-matrix-policy.js";
 
 if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
     throw new Error("The paid model matrix must be started through an npm test:paid:* script");
@@ -17,24 +17,9 @@ if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
 const packageRoot = process.cwd();
 const installation = await inspectClaudeInstallation();
 const providerModels = providerModelsForSubscription(installation.subscriptionType);
-const efforts = ["low", "medium", "high", "xhigh", "max"];
-const effortModels = ["default", "sonnet", "opus", "haiku"];
 const advertisedModels = providerModels.map((model) => model.id);
 assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), advertisedModels, "compatibility targets must match advertised models");
-// Fable 5 availability and included quota vary by subscription tier. It is
-// intentionally opt-in and excluded from the blocking gate; the standalone
-// case remains selectable for accounts with Fable access.
-const ungatedModels = new Set(["fable", "fable-5.1"]);
-const mediumOnlyModels = advertisedModels.filter((model) => !effortModels.includes(model));
-const coreCases = [
-    { model: "sonnet", effort: "medium" },
-    ...effortModels.flatMap((model) => efforts.map((effort) => ({ model, effort }))).filter(({ model, effort }) => model !== "sonnet" || effort !== "medium"),
-    ...mediumOnlyModels.filter((model) => !ungatedModels.has(model)).map((model) => ({ model, effort: "medium" })),
-];
-const selectableCases = [
-    ...coreCases,
-    ...mediumOnlyModels.filter((model) => ungatedModels.has(model)).map((model) => ({ model, effort: "medium" })),
-];
+const { coreCases, selectableCases } = planModelMatrixCases(advertisedModels);
 const CASE_TIMEOUT_MS = 4 * 60_000;
 const selectedCase = process.argv[2] === "--case" ? process.argv[3] : undefined;
 if ((process.argv.length > 2 && (!selectedCase || process.argv.length !== 4)) || (selectedCase && !selectableCases.some(({ model, effort }) => `${model}:${effort}` === selectedCase))) {
@@ -115,7 +100,7 @@ try {
         const served = await runCase(directory, model, effort);
         console.log(`ok - ${model}:${effort} -> ${served.resolvedModel}; context ${served.contextWindow}, max output ${served.maxOutputTokens}`);
     }
-    console.log(`ok - ${selectedCases.length} blocking model/effort combinations passed`);
+    console.log(`ok - ${selectedCases.length} model/effort combinations passed`);
 }
 finally {
     await rm(directory, { recursive: true, force: true });
