@@ -33,7 +33,8 @@ function providerModel(
 export function providerModelsForSubscription(subscriptionType: ClaudeSubscriptionType): ProviderModelConfig[] {
   const opusContextWindow = subscriptionType === "pro" ? 200_000 : 1_000_000;
   return [
-    providerModel("default", "Claude Code Default", 1_000_000, 64_000),
+    // The account default can select Opus; retain the same Pro safety bound.
+    providerModel("default", "Claude Code Default", opusContextWindow, 64_000),
     providerModel("sonnet", "Claude Code Sonnet", 1_000_000, 64_000),
     providerModel("fable", "Claude Code Fable", 1_000_000, 64_000),
     providerModel("opus", "Claude Code Opus", opusContextWindow, 64_000),

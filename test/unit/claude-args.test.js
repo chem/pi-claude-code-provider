@@ -35,6 +35,15 @@ test("uses only generated attachment references and replacement prompt", () => {
     ]);
 });
 
+test("default delegates model selection to Claude while explicit aliases stay explicit", () => {
+    const prepared = { transcriptBlocks: [], attachmentPaths: [], systemPromptPath: "/tmp/system.txt" };
+    assert.equal(providerArgs(prepared, "default", "low").args.includes("--model"), false);
+    for (const model of ["sonnet", "opus", "haiku", "fable"]) {
+        const { args } = providerArgs(prepared, model, "low");
+        assert.equal(args[args.indexOf("--model") + 1], model);
+    }
+});
+
 test("pins cache-stable Claude settings and omits fixed outer guidance", () => {
     const args = baseClaudeArgs();
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
