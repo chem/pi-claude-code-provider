@@ -16,7 +16,6 @@ export const CLAUDE_HEADLESS_HELP = [
   "--tools",
   "--allowedTools",
   "--system-prompt",
-  "--system-prompt-file",
   "--model",
   "--effort",
 ].join("\n");

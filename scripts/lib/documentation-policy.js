@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
-export function documentationPolicyErrors(root, markdownFiles, verifiedVersions) {
+export function documentationPolicyErrors(root, markdownFiles, verifiedVersions, minimumVersions = {}) {
   const errors = [];
   for (const path of markdownFiles) {
     const source = readFileSync(path, "utf8");
@@ -26,9 +26,19 @@ export function documentationPolicyErrors(root, markdownFiles, verifiedVersions)
   if (!readme.includes("](DEVELOPING.md#compatibility-baseline)")) {
     errors.push("README.md must link to DEVELOPING.md#compatibility-baseline");
   }
+  // README owns the user-facing minimum supported versions; DEVELOPING.md owns
+  // the verified baseline. Each number lives in exactly one document.
+  const minimums = new Set(Object.values(minimumVersions));
+  for (const [component, version] of Object.entries(minimumVersions)) {
+    if (!readme.includes(version)) {
+      errors.push(`README.md omits the minimum supported ${component} version ${version}`);
+    }
+  }
   for (const [component, version] of Object.entries(verifiedVersions)) {
     if (!compatibility.includes(version)) errors.push(`DEVELOPING.md omits verified version ${version}`);
-    if (readme.includes(version)) {
+    // A verified version that is also a minimum belongs in README. The two
+    // constants coincide whenever a paid gate validates the current floor.
+    if (readme.includes(version) && !minimums.has(version)) {
       errors.push(`README.md duplicates verified ${component} version ${version}; DEVELOPING.md owns compatibility baselines`);
     }
   }

@@ -10,7 +10,11 @@ import type { ClaudeAuthStatus, ClaudeInstallation, ClaudeSubscriptionType } fro
 
 const execFileAsync = promisify(execFile);
 const ELIGIBLE_SUBSCRIPTIONS: ReadonlySet<string> = new Set(["pro", "max", "team", "enterprise"]);
-const REQUIRED_HEADLESS_FLAGS = [
+// Every flag here appears in Claude Code's --help, so absence really does mean
+// the launch would fail. --system-prompt-file is deliberately absent: it is
+// publicly documented but hidden from the help screen, so scraping for it made
+// preflight fail where the real launch succeeds. MINIMUM_VERSIONS covers it.
+export const REQUIRED_HEADLESS_FLAGS = [
   "--print",
   "--setting-sources",
   "--settings",
@@ -29,6 +33,7 @@ const REQUIRED_HEADLESS_FLAGS = [
   "--allowedTools",
   "--model",
   "--effort",
+  "--system-prompt",
 ] as const;
 
 export function claudeExecutable(): string {
@@ -119,8 +124,6 @@ async function execClaudeFile(executable: string, args: readonly string[]) {
 
 export function validateClaudeCapabilities(helpOutput: string): void {
   const missing: string[] = REQUIRED_HEADLESS_FLAGS.filter((flag) => !hasCliOption(helpOutput, flag));
-  if (!hasCliOption(helpOutput, "--system-prompt")) missing.push("--system-prompt");
-  if (!hasCliOption(helpOutput, "--system-prompt-file")) missing.push("--system-prompt-file");
   if (missing.length > 0) {
     throw new ClaudeCodeError(
       "capability_missing",
@@ -131,11 +134,7 @@ export function validateClaudeCapabilities(helpOutput: string): void {
 
 function hasCliOption(helpOutput: string, option: string): boolean {
   const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`(?:^|[\\s,])${escaped}(?=$|[\\s,=<\\[])`, "m").test(helpOutput)) return true;
-  // Only the file variant needs special handling for Claude 2.1.241's
-  // shorthand; the generic matcher recognizes its --system-prompt prefix.
-  return option === "--system-prompt-file" &&
-    /(?:^|[\s,])--system-prompt\[-file\](?=$|[\s,=<\[])/m.test(helpOutput);
+  return new RegExp(`(?:^|[\\s,])${escaped}(?=$|[\\s,=<\\[])`, "m").test(helpOutput);
 }
 
 async function resolveExecutable(configured: string, label: string, code: string): Promise<string> {

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERIFIED_VERSIONS, versionStatus } from "../src/compatibility.ts";
+import { MINIMUM_VERSIONS, VERIFIED_VERSIONS, versionStatus } from "../src/compatibility.ts";
 import { PI_PEERS, dependencyPolicyErrors } from "./lib/dependency-policy.js";
 import { piLaunch } from "./lib/pi-installation.js";
 import { documentationPolicyErrors } from "./lib/documentation-policy.js";
@@ -41,6 +41,7 @@ const documentationErrors = documentationPolicyErrors(
   root,
   repositoryFiles(root, ["."]).filter((path) => path.endsWith(".md")),
   VERIFIED_VERSIONS,
+  MINIMUM_VERSIONS,
 );
 if (documentationErrors.length) throw new Error(documentationErrors.join("\n"));
 // Deterministic CI must resolve Pi types from the verified baseline; a stale pin

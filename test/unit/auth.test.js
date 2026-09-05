@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, validateClaudeCapabilities } from "../../src/auth.ts";
-import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
+import { MINIMUM_VERSIONS, meetsMinimumVersion } from "../../src/compatibility.ts";
 import { validateProcessTerminationCapability, windowsTaskkillExecutable } from "../../src/process-utils.ts";
 import { CLAUDE_2_1_241_HEADLESS_HELP, CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
 import { nodeFixtureSource } from "../support/node-fixture.js";
 
-const bracketedSystemPromptHelp = CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]");
+// Preflight mechanics are independent of the compatibility baseline, so these
+// fixtures pin their own version rather than tracking a constant a paid gate moves.
+const FIXTURE_CLAUDE_VERSION = "2.1.261";
 
 function missingClaudeCapabilities(help) {
     try {
@@ -67,18 +69,24 @@ test("requires the Claude Code headless command surface", () => {
     }
 });
 
-test("matches option aliases, value notation, and documented shorthand", () => {
+test("matches option aliases and value notation", () => {
     assert.doesNotThrow(() => validateClaudeCapabilities(
         CLAUDE_HEADLESS_HELP
             .replace("--allowedTools", "--allowedTools, --allowed-tools=<tools...>")
             .replace("--model", "--model=<model>")
-            .replace("--prompt-suggestions", "--prompt-suggestions [value]")
-            .replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file] <prompt>"),
+            .replace("--prompt-suggestions", "--prompt-suggestions [value]"),
     ));
-    assert.throws(
-        () => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace("--system-prompt\n--system-prompt-file", "--system-prompt[-file]-old")),
-        /--system-prompt/,
-    );
+});
+
+test("compares versions numerically rather than lexically", () => {
+    // The failure this guards is real: "2.1.9" sorts above "2.1.241" as strings.
+    assert.equal(meetsMinimumVersion("2.1.9", "2.1.241"), false);
+    assert.equal(meetsMinimumVersion("2.1.261", MINIMUM_VERSIONS.claudeCode), true);
+    assert.equal(meetsMinimumVersion("2.1.260", MINIMUM_VERSIONS.claudeCode), false);
+    assert.equal(meetsMinimumVersion("2.2.0", MINIMUM_VERSIONS.claudeCode), true);
+    assert.equal(meetsMinimumVersion("3.0.0", MINIMUM_VERSIONS.claudeCode), true);
+    assert.equal(meetsMinimumVersion("0.85.1", MINIMUM_VERSIONS.pi), true);
+    assert.equal(meetsMinimumVersion("0.84.10", MINIMUM_VERSIONS.pi), false);
 });
 
 // Fake Claude programs use synchronous test-only stdio because some restricted
@@ -87,9 +95,9 @@ test("resolves a directly launchable Claude executable through Windows PATHEXT",
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-path-"));
     const claude = join(directory, "claude.cjs");
     await writeFile(claude, nodeFixtureSource(`
-if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
+if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${FIXTURE_CLAUDE_VERSION}\n`)});
 else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
-else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
+else process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
 `));
     const original = {
         path: process.env.PATH,
@@ -122,9 +130,9 @@ test("preflight honors and functionally validates the Claude executable override
     const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-auth-"));
     const claude = join(directory, process.platform === "win32" ? "claude.cjs" : "claude");
     await writeFile(claude, nodeFixtureSource(`
-if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
+if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${FIXTURE_CLAUDE_VERSION}\n`)});
 else if (process.argv[2] === "auth") process.stdout.write(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH_JSON)});
-else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
+else process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
 `), { mode: 0o700 });
     await chmod(claude, 0o700);
     const originalClaude = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
@@ -132,7 +140,7 @@ else process.stdout.write(${JSON.stringify(bracketedSystemPromptHelp)});
     try {
         const installation = await inspectClaudeInstallation();
         assert.equal(installation.executable, await realpath(claude));
-        assert.equal(installation.version, VERIFIED_VERSIONS.claudeCode);
+        assert.equal(installation.version, FIXTURE_CLAUDE_VERSION);
         assert.equal(installation.subscriptionType, "pro");
         await writeFile(claude, "#!/usr/bin/env node\n", { mode: 0o700 });
         await assert.rejects(inspectClaudeInstallation(), /determine the Claude Code version/);

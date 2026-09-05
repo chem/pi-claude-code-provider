@@ -11,10 +11,10 @@ test("documentation policy validates local links, anchors, and verified versions
     const index = join(root, "README.md");
     const target = join(root, "TARGET.md");
     const compatibility = join(root, "DEVELOPING.md");
-    await writeFile(index, "[valid](TARGET.md#target-heading) [baseline](DEVELOPING.md#compatibility-baseline) [external](https://example.com)\n");
+    await writeFile(index, "[valid](TARGET.md#target-heading) [baseline](DEVELOPING.md#compatibility-baseline) [external](https://example.com)\nMinimum 7.8.9.\n");
     await writeFile(target, "# Target heading\n");
     await writeFile(compatibility, "# Compatibility baseline\nVerified: 1.2.3 and 4.5.6\n");
-    assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { pi: "1.2.3", claude: "4.5.6" }), []);
+    assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { pi: "1.2.3", claude: "4.5.6" }, { claude: "7.8.9" }), []);
 
     await writeFile(index, "[missing](MISSING.md) [anchor](TARGET.md#missing) [baseline](DEVELOPING.md#compatibility-baseline)\n");
     assert.deepEqual(documentationPolicyErrors(`${root}${sep}`, [index, target, compatibility], { pi: "1.2.3", claude: "9.9.9" }), [
@@ -32,6 +32,23 @@ test("documentation policy validates local links, anchors, and verified versions
     await writeFile(index, "Compatibility details moved.\n");
     assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { pi: "1.2.3", claude: "4.5.6" }), [
       "README.md must link to DEVELOPING.md#compatibility-baseline",
+    ]);
+
+    // README owns the minimums, so a missing one is an error and a present one
+    // is not a duplicate even when it also happens to be a verified version.
+    await writeFile(index, "[baseline](DEVELOPING.md#compatibility-baseline)\n");
+    assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], {}, { pi: "9.9.9" }), [
+      "README.md omits the minimum supported pi version 9.9.9",
+    ]);
+    await writeFile(index, "[baseline](DEVELOPING.md#compatibility-baseline) Requires 4.5.6 or newer.\n");
+    assert.deepEqual(
+      documentationPolicyErrors(root, [index, target, compatibility], { claude: "4.5.6" }, { claude: "4.5.6" }),
+      [],
+      "a verified version that is also the minimum belongs in README",
+    );
+    assert.deepEqual(documentationPolicyErrors(root, [index, target, compatibility], { claude: "4.5.6" }, { claude: "1.2.3" }), [
+      "README.md omits the minimum supported claude version 1.2.3",
+      "README.md duplicates verified claude version 4.5.6; DEVELOPING.md owns compatibility baselines",
     ]);
   } finally {
     await rm(root, { recursive: true, force: true });

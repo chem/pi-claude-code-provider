@@ -113,10 +113,13 @@ export interface DoctorSummaryInput {
 
 export function formatDoctorSummary(input: DoctorSummaryInput): string {
   const verification = [input.platformStatus, input.piStatus, input.claudeStatus]
-    .map(
-      (status) =>
-        `${status.component} ${status.current} (${status.isVerified ? "verified" : `unverified; tested ${status.verified}`})`,
-    )
+    .map((status) => {
+      const verified = status.isVerified ? "verified" : `unverified; tested ${status.verified}`;
+      // A supported-version floor is a separate statement from the tested
+      // baseline, so report it only when the install actually falls below it.
+      const floor = status.meetsMinimum === false ? `; below minimum ${status.minimum}` : "";
+      return `${status.component} ${status.current} (${verified}${floor})`;
+    })
     .join("; ");
   const metrics = input.metrics;
   const reportedPromptTokens = metrics ? metrics.inputTokens + metrics.cacheRead + metrics.cacheWrite : 0;

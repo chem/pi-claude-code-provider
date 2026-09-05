@@ -5,6 +5,17 @@ export const VERIFIED_VERSIONS = Object.freeze({
   claudeCode: "2.1.241",
 });
 
+// The oldest Pi and Claude Code this provider claims to support. Deliberately
+// NOT derived from VERIFIED_VERSIONS, which records the newest versions a paid
+// gate has validated and rises on its own schedule. These fall or rise only by
+// an explicit decision about what is supported, so deriving one from the other
+// would turn every baseline bump into a silent, unreviewed support drop. Assert
+// nothing about their relative order: both start above today's baseline.
+export const MINIMUM_VERSIONS = Object.freeze({
+  pi: "0.85.1",
+  claudeCode: "2.1.261",
+});
+
 const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64; Apple Silicon macOS/darwin-arm64";
 
 // Which family an alias must serve, not which dated model. Claude Code refreshes
@@ -22,7 +33,24 @@ export interface VersionStatus {
   current: string;
   verified: string;
   isVerified: boolean;
+  minimum?: string;
+  meetsMinimum?: boolean;
   warning?: string;
+}
+
+/**
+ * Compare dotted version triples numerically. Lexical comparison gets this
+ * wrong in exactly the range that matters: "2.1.9" sorts above "2.1.241".
+ */
+export function meetsMinimumVersion(current: string, minimum: string): boolean {
+  const parse = (value: string) => (value.match(/\d+/g) ?? []).map(Number);
+  const left = parse(current);
+  const right = parse(minimum);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
 }
 
 export function platformStatus(
@@ -98,12 +126,22 @@ export function startupPlatformWarning(
   return acknowledgedPlatform === status.current ? undefined : status.warning;
 }
 
-/** Return verification metadata; mismatches never block execution by themselves. */
-export function versionStatus(component: string, current: string, verified: string): VersionStatus {
+/**
+ * Return verification metadata; mismatches never block execution by themselves.
+ * A minimum is reported through its own fields rather than through `warning`,
+ * which belongs to the platform advisory and its acknowledgement.
+ */
+export function versionStatus(
+  component: string,
+  current: string,
+  verified: string,
+  minimum?: string,
+): VersionStatus {
   return {
     component,
     current,
     verified,
     isVerified: current === verified,
+    ...(minimum === undefined ? {} : { minimum, meetsMinimum: meetsMinimumVersion(current, minimum) }),
   };
 }
