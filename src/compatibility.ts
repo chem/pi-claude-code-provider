@@ -7,13 +7,14 @@ export const VERIFIED_VERSIONS = Object.freeze({
 
 const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64; Apple Silicon macOS/darwin-arm64";
 
-export const EXPECTED_MODEL_RESOLUTIONS = Object.freeze({
-  // No --model override: Claude selects the account's runtime default.
-  default: null,
-  sonnet: "claude-sonnet-5",
-  fable: "claude-fable-5",
-  opus: "claude-opus-5",
-  haiku: "claude-haiku-4-5-20251001",
+// Which family an alias must serve, not which dated model. Claude Code refreshes
+// model versions on its own schedule; pinning exact ids only guarantees the paid
+// gate fails on a release that changed nothing here.
+export const EXPECTED_MODEL_FAMILIES = Object.freeze({
+  sonnet: /^claude-sonnet-/,
+  fable: /^claude-fable-/,
+  opus: /^claude-opus-/,
+  haiku: /^claude-haiku-/,
 });
 
 export interface VersionStatus {

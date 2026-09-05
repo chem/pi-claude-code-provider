@@ -8,7 +8,6 @@
 
 ### Fixed
 
-- Treat `default` as Claude Code's account-selected model in live validation instead of pinning it to Sonnet, and keep its Pro context limit at the same conservative 200K as Opus.
 - Isolate paid validation from personal Pi settings, extensions, skills, and context files without moving user files or weakening the provider's prompt-size limit.
 - Resolve npm Pi installations whose CLI lives in `dist/bundle/cli.js`, checking package identities before using a candidate directory.
 

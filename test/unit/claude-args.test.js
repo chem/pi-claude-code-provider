@@ -35,9 +35,8 @@ test("uses only generated attachment references and replacement prompt", () => {
     ]);
 });
 
-test("default delegates model selection to Claude while explicit aliases stay explicit", () => {
+test("every advertised alias is passed to Claude verbatim", () => {
     const prepared = { transcriptBlocks: [], attachmentPaths: [], systemPromptPath: "/tmp/system.txt" };
-    assert.equal(providerArgs(prepared, "default", "low").args.includes("--model"), false);
     for (const model of ["sonnet", "opus", "haiku", "fable"]) {
         const { args } = providerArgs(prepared, model, "low");
         assert.equal(args[args.indexOf("--model") + 1], model);

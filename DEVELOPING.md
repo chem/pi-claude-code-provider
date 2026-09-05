@@ -56,7 +56,7 @@ Community-reported, not maintainer-gated. A contributor ran the release stages o
 - Text, tools, images, isolation, recovery, Unicode, history, and web search.
 - Prompt-cache reuse of 99.3% and 99.0% on subsequent turns.
 - Tool bridge round trips through both npm Pi and the macOS arm64 standalone build.
-- All 20 blocking model/effort combinations. The account default selected Opus 5 at all five effort levels.
+- All 20 blocking model/effort combinations of the time. The reporter's `default` served Opus 5 at all five effort levels, while this project's served Sonnet 5 — the divergence that led to removing that alias.
 
 The model matrix passes with personal skills left in place. Fable remains outside the blocking matrix. The verified Pi baseline remains 0.84.2. Raising these values requires a maintainer-run gate; a reproduction here would supersede this section.
 
@@ -78,8 +78,8 @@ The runner gives Pi a temporary agent directory and disables automatic extension
 | `npm run test:paid:cache` | 3 |
 | `npm run test:paid:fable` | 1 |
 | `npm run test:paid:opus` | 1 |
-| `npm run test:paid:matrix` | 20 |
-| `npm run test:paid:release` | 57 |
+| `npm run test:paid:matrix` | 15 |
+| `npm run test:paid:release` | 52 |
 
 `PI_CLAUDE_CODE_PROVIDER_PI_BIN` selects which Pi executable the live scripts launch; without it they launch the npm-hosted CLI entry. This is deliberately separate from package resolution, so one npm-hosted development host can drive both distributions. `bridge-standalone` refuses to start unless that variable is set; point it at an extracted tar.gz `pi`.
 
@@ -87,7 +87,7 @@ Both bridge lanes are required, and `test:paid:release` runs both. A `--no-tools
 
 The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable is technically selectable, but validating it on Pro consumes separate paid credits rather than the included subscription allocation, so it is deliberately excluded from the release matrix; the blocking Sonnet and Opus cases already exercise the shared transport. `npm run test:paid:fable` remains an opt-in one-launch case for a maintainer who separately authorizes that spend. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
 
-The model matrix pins verified identities for explicit aliases, but `default` delegates to Claude Code's account runtime default. For that entry it requires a concrete Claude model identity instead of assuming Sonnet or Opus. All entries still check context/output capabilities, cleanup, and the absence of leaked private directories. Pro's `default` and `opus` entries retain the conservative 200K context limit.
+The model matrix asserts the family an alias serves, not a dated model id, so an upstream model refresh cannot fail the gate while an alias serving the wrong family still does. Every entry also checks context/output capabilities, cleanup, and the absence of leaked private directories. Pro's `opus` entry retains the conservative 200K context limit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization. Claude Code 2.1.233 introduced a changing `<total_tokens>` reminder that broke reuse across fresh print-mode processes; the provider pins `totalTokensReminder: "off"` following [bcherny's maintainer guidance](https://github.com/anthropics/claude-code/issues/81259#issuecomment-5311888970). The setting is otherwise undocumented, so do not remove it without a replacement cache probe and new upstream guidance.
 

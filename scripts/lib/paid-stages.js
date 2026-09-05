@@ -21,7 +21,7 @@ export const PAID_STAGES = {
   // one-launch case is opt-in and excluded from the blocking gate.
   fable: { label: "fable model", cap: 1, script: "model-matrix.js", args: ["--case", "fable:medium"] },
   opus: { label: "opus model", cap: 1, script: "model-matrix.js", args: ["--case", "opus:medium"] },
-  matrix: { label: "model matrix", cap: 20, script: "model-matrix.js", args: [] },
+  matrix: { label: "model matrix", cap: 15, script: "model-matrix.js", args: [] },
 };
 
 export const RELEASE_ORDER = ["full", "cache", "bridge", "bridge-standalone", "matrix"];

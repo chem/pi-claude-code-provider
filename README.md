@@ -35,7 +35,7 @@ Add `-l` for a project-local installation. Pi loads project packages only after 
 
 ## Use
 
-Open `/model` and choose one of these aliases: `default`, `sonnet`, `fable`, `opus`, or `haiku`. Pi displays them with the provider name, for example `sonnet [pi-claude-code-provider]`.
+Open `/model` and choose one of these aliases: `sonnet`, `fable`, `opus`, or `haiku`. Pi displays them with the provider name, for example `sonnet [pi-claude-code-provider]`.
 
 To select one directly:
 
@@ -45,11 +45,9 @@ To select one directly:
 
 The same canonical reference works from the command line with `pi --model pi-claude-code-provider/sonnet`.
 
-`default` leaves model selection to Claude Code's [account runtime default](https://code.claude.com/docs/en/model-config#default-model-setting); it is not a synonym for Sonnet. Personal model settings and environment overrides are suppressed by this provider, while organization-managed policy can still apply. Select `sonnet` or `opus` explicitly when the model family matters.
+Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability.
 
-Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability. The `default` entry uses the same conservative Pro limit because it can select Opus; explicit `sonnet` retains its 1M window.
-
-The `fable` alias is offered and separately testable, but it is excluded from the paid release gate. Fable 5 availability, included allocation, and billing vary by subscription tier. It otherwise follows the standard alias path wherever the account allows it. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
+The `fable` alias is offered and separately testable, but it is excluded from the paid release gate. Fable availability, included allocation, and billing vary by subscription tier. It otherwise follows the standard alias path wherever the account allows it. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
 
 **Model identity:** self-identification is generated text, not routing metadata, and Pi's coding-tool prompt and schemas can make Claude name an older Sonnet even when Claude Code served Opus. Use the assistant message's `responseModel` field in Pi's JSON output for the served model; Pi's status line shows the requested alias.
 
