@@ -30,7 +30,7 @@ const missingPiBin = planned.filter((stage) => stage.requiresPiBin && !piBinOver
 if (missingPiBin.length) {
   throw new Error(
     `The ${missingPiBin.map((stage) => stage.label).join(" and ")} stage runs against a standalone Pi, so ` +
-    `${PI_BIN_ENV} must point at an extracted tar.gz pi executable (for example ${PI_BIN_ENV}=~/pi-0.84.2/pi).`,
+    `${PI_BIN_ENV} must point at an extracted tar.gz pi executable (for example ${PI_BIN_ENV}=~/pi-0.85.1/pi).`,
   );
 }
 const totalCap = planned.reduce((total, stage) => total + stage.cap, 0);
