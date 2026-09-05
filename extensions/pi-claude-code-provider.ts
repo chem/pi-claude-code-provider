@@ -7,7 +7,7 @@ import { Type } from "typebox";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
 import { bridgeArgv } from "../src/claude-args.ts";
-import { VERIFIED_VERSIONS, platformStatus, versionStatus } from "../src/compatibility.ts";
+import { VERIFIED_VERSIONS, platformStatus, startupPlatformWarning, versionStatus } from "../src/compatibility.ts";
 import { writeDiagnosticReport } from "../src/diagnostics.ts";
 import { errorText, normalizeClaudeOverflow } from "../src/errors.ts";
 import { formatDoctorSummary, probeBridge } from "../src/doctor.ts";
@@ -57,7 +57,8 @@ export default async function piClaudeCodeProvider(pi: ExtensionAPI): Promise<vo
     // The provider starts a process per tool round-trip; session scope prevents
     // Claude's repeated notice from surfacing throughout one Pi turn.
     activeRateLimitNotify = createRateLimitNotifier((message) => ctx.ui.notify(message, "warning"));
-    if (currentPlatform.warning) ctx.ui.notify(`${NOTICE_PREFIX} ${currentPlatform.warning}`, "warning");
+    const platformWarning = startupPlatformWarning(currentPlatform);
+    if (platformWarning) ctx.ui.notify(`${NOTICE_PREFIX} ${platformWarning}`, "warning");
     if (searchRegistrationAttempted) return;
     searchRegistrationAttempted = true;
     registerWebSearchTool(

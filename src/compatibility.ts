@@ -87,6 +87,16 @@ export function platformStatus(
   };
 }
 
+/** Dismiss only the startup advisory for an explicitly acknowledged platform.
+ * Doctor/report metadata and runtime validation remain unchanged.
+ */
+export function startupPlatformWarning(
+  status: VersionStatus,
+  acknowledgedPlatform: string | undefined = process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM,
+): string | undefined {
+  return acknowledgedPlatform === status.current ? undefined : status.warning;
+}
+
 /** Return verification metadata; mismatches never block execution by themselves. */
 export function versionStatus(component: string, current: string, verified: string): VersionStatus {
   return {

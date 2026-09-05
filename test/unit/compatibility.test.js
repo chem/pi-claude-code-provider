@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EXPECTED_MODEL_RESOLUTIONS, VERIFIED_VERSIONS, platformStatus, versionStatus } from "../../src/compatibility.ts";
+import { EXPECTED_MODEL_RESOLUTIONS, VERIFIED_VERSIONS, platformStatus, startupPlatformWarning, versionStatus } from "../../src/compatibility.ts";
 
 test("verified versions report verified status without a warning", () => {
   const status = versionStatus("Pi", VERIFIED_VERSIONS.pi, VERIFIED_VERSIONS.pi);
@@ -21,6 +21,18 @@ test("untested versions remain identifiable without a startup warning", () => {
   assert.equal(status.current, "99.0.0");
   assert.equal(status.verified, VERIFIED_VERSIONS.claudeCode);
   assert.equal(status.warning, undefined);
+});
+
+test("startup platform acknowledgement is exact and preserves diagnostic metadata", () => {
+  const status = Object.freeze(platformStatus("darwin", "arm64"));
+  for (const value of ["", "1", "true", "*", "darwin/x64", "darwin/arm64 "]) {
+    assert.equal(startupPlatformWarning(status, value), status.warning);
+  }
+  assert.equal(startupPlatformWarning(status, "darwin/arm64"), undefined);
+  assert.equal(status.isVerified, false);
+  assert.match(status.warning, /live validation is pending/);
+  assert.equal(startupPlatformWarning(platformStatus("linux", "arm64"), "darwin/arm64"), platformStatus("linux", "arm64").warning);
+  assert.equal(startupPlatformWarning(platformStatus("win32", "x64"), ""), undefined);
 });
 
 test("reports verified and candidate platforms accurately", () => {

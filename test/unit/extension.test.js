@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import initializePiClaudeCodeProvider from "../../extensions/pi-claude-code-provider.ts";
-import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
+import { VERIFIED_VERSIONS, platformStatus } from "../../src/compatibility.ts";
 import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
 import { nodeFixtureSource } from "../support/node-fixture.js";
 
@@ -58,6 +58,38 @@ else {
     await chmod(executable, 0o700);
     return { directory, executable };
 }
+
+test("platform acknowledgement hides only the startup advisory and leaves doctor truthful", async (t) => {
+    const status = platformStatus();
+    if (!status.warning) return t.skip("host has no platform advisory");
+    const { directory, executable } = await createFakeClaude();
+    const originalPath = process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+    const originalAcknowledgement = process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM;
+    process.env.PI_CLAUDE_CODE_PROVIDER_PATH = executable;
+    try {
+        const pi = fakePi();
+        await piClaudeCodeProvider(pi.api);
+        const notices = [];
+        const ctx = { ui: { notify(message, level) { notices.push({ message, level }); } } };
+        delete process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM;
+        pi.handlers.get("session_start")[0]({}, ctx);
+        assert.ok(notices.some(({ message }) => message.includes(status.warning)));
+        await pi.handlers.get("session_shutdown")[0]({}, {});
+        notices.length = 0;
+        process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM = status.current;
+        pi.handlers.get("session_start")[0]({}, ctx);
+        assert.equal(notices.some(({ message }) => message.includes(status.warning)), false);
+        await pi.commands.get("pi-claude-code-provider-doctor").handler("", ctx);
+        assert.ok(notices.some(({ message }) => message.includes(`Platform ${status.current} (unverified;`)));
+        await pi.handlers.get("session_shutdown")[0]({}, {});
+    } finally {
+        if (originalPath === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_PATH;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_PATH = originalPath;
+        if (originalAcknowledgement === undefined) delete process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM;
+        else process.env.PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM = originalAcknowledgement;
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 
 test("routes rate-limit warnings to the active Pi UI without requiring one", async () => {
     const { directory, executable } = await createFakeClaude("ok", { rateLimitInfo: {
