@@ -4,7 +4,7 @@
 
 ### Removed
 
-- **Breaking.** The `default` model alias. Use `sonnet`. Pi reports an unknown model for a saved `pi --model pi-claude-code-provider/default` or profile entry.
+- **Breaking.** Removed the `default` model alias. It sent no `--model` flag, so the served model was chosen by Claude Code account state that varies between accounts — observed as Sonnet on one and Opus on another — and never reflected the model selected in the user's own Claude Code settings, which this provider does not load. Pi reports an unknown model for a saved `pi --model pi-claude-code-provider/default` or profile entry.
 
 ### Added
 
