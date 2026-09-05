@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { closeLiveRpcProcess, consumeJsonl, superviseLiveProcess } from "./lib/live-process.js";
-import { describePiLaunch, piLaunch } from "./lib/pi-installation.js";
+import { describePiLaunch, livePiLaunch } from "./lib/pi-installation.js";
 if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
     throw new Error("Paid live tests must be started through an npm test:paid:* script");
 }
@@ -103,8 +103,8 @@ async function runCacheProbe(cwd) {
 }
 async function runProviderJourney(cwd) {
     const rpc = openPiRpc(cwd, [
-        "--mode", "rpc", "--no-session", "--no-extensions", "-e", packageRoot,
-        "--no-skills", "--no-context-files", "--provider", "pi-claude-code-provider",
+        "--mode", "rpc", "--no-session", "-e", packageRoot,
+        "--provider", "pi-claude-code-provider",
         "--model", "sonnet:medium", "--tools", "read,write",
     ], "Pi provider journey");
     let completed = false;
@@ -179,7 +179,7 @@ function openPiRpc(cwd, args, label) {
     return { turn, close };
 }
 function spawnPi(args, options) {
-    const launch = piLaunch(args);
+    const launch = livePiLaunch(args);
     return spawn(launch.command, launch.args, {
         ...options,
         detached: process.platform !== "win32",

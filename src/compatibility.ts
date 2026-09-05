@@ -5,10 +5,11 @@ export const VERIFIED_VERSIONS = Object.freeze({
   claudeCode: "2.1.241",
 });
 
-const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64";
+const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64; Apple Silicon macOS/darwin-arm64";
 
 export const EXPECTED_MODEL_RESOLUTIONS = Object.freeze({
-  default: "claude-sonnet-5",
+  // No --model override: Claude selects the account's runtime default.
+  default: null,
   sonnet: "claude-sonnet-5",
   fable: "claude-fable-5",
   opus: "claude-opus-5",
@@ -66,7 +67,7 @@ export function platformStatus(
       current,
       verified: VERIFIED_PLATFORMS,
       isVerified: false,
-      warning: `${current} is a compatibility candidate; the verified platform baselines are WSL2 Ubuntu/linux-x64 and native Windows/win32-x64`,
+      warning: `${current} is a compatibility candidate; the verified platform baselines are ${VERIFIED_PLATFORMS}`,
     };
   }
   if (platform === "darwin" && architecture === "arm64") {
@@ -74,8 +75,7 @@ export function platformStatus(
       component: "Platform",
       current,
       verified: VERIFIED_PLATFORMS,
-      isVerified: false,
-      warning: "Apple Silicon macOS is a compatibility candidate; deterministic CI passes, but subscription-consuming live validation is pending",
+      isVerified: true,
     };
   }
   return {

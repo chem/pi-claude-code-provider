@@ -8,8 +8,9 @@ test("verified versions report verified status without a warning", () => {
   assert.equal(status.warning, undefined);
 });
 
-test("defines concrete compatibility targets for every picker alias", () => {
+test("distinguishes the account default from pinned alias compatibility targets", () => {
   assert.deepEqual(Object.keys(EXPECTED_MODEL_RESOLUTIONS), ["default", "sonnet", "fable", "opus", "haiku"]);
+  assert.equal(EXPECTED_MODEL_RESOLUTIONS.default, null);
   assert.equal(EXPECTED_MODEL_RESOLUTIONS.opus, "claude-opus-5");
   assert.match(EXPECTED_MODEL_RESOLUTIONS.haiku, /^claude-haiku-/);
 });
@@ -27,8 +28,9 @@ test("reports verified and candidate platforms accurately", () => {
   assert.equal(platformStatus("linux", "x64", "6.8.0-generic").isVerified, false);
   assert.equal(platformStatus("linux", "arm64", "6.6-microsoft-standard-WSL2", "Ubuntu").isVerified, false);
   const macos = platformStatus("darwin", "arm64");
-  assert.equal(macos.isVerified, false);
-  assert.match(macos.warning, /Apple Silicon.*deterministic CI passes.*live validation is pending/);
+  assert.equal(macos.isVerified, true);
+  assert.equal(macos.warning, undefined);
+  assert.match(macos.verified, /Apple Silicon macOS\/darwin-arm64/);
   assert.match(platformStatus("darwin", "x64").warning, /unverified/);
   const windows = platformStatus("win32", "x64");
   assert.equal(windows.isVerified, true);

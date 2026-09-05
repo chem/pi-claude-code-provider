@@ -12,7 +12,7 @@ npm test
 
 Do not run `npm install` at the repository root. The package has no installed dependencies and must not contain root `node_modules` or a root lockfile. `setup:dev` installs the isolated, locked `tooling/` package containing the TypeScript parser/compiler and Node declarations used by source-policy checks and typechecking. Its ignored `node_modules/` is generated development state, not published runtime code. Pi loads the TypeScript extension directly; there is no runtime build.
 
-When npm and standalone Pi installations coexist, development uses whichever `pi` resolves first on `PATH`. Put the npm installation's bin directory first for `npm run check` and `npm test`; verify it with `command -v pi` on POSIX or `where pi` on Windows. Keep the development host npm-based, and use `PI_CLAUDE_CODE_PROVIDER_PI_BIN` only to select a standalone executable for the live bridge lane.
+When npm and standalone Pi installations coexist, development uses whichever `pi` resolves first on `PATH`. Put the npm installation's bin directory first for `npm run check` and `npm test`; verify it with `command -v pi` on POSIX or `where pi` on Windows. Keep the development host npm-based, and use `PI_CLAUDE_CODE_PROVIDER_PI_BIN` only to select a standalone executable for the live bridge lane. The resolver recognizes both `dist/cli.js` and `dist/bundle/cli.js` npm layouts and checks package identities. Resolving a newer layout does not establish version compatibility: if that installation's exported modules have missing dependencies, use an isolated npm installation of the verified Pi version rather than modifying the global install.
 
 To load a local checkout:
 
@@ -40,20 +40,33 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.84.2, npm distribution; standalone tar.gz build live-verified on Linux x64 only |
-| Claude Code | 2.1.241 |
-| Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
-| Platform | WSL2 Ubuntu/Linux x64; native Windows x64; GitHub-hosted Apple Silicon macOS deterministic CI |
+| Pi | 0.84.2, npm distribution; standalone tar.gz bridge live-verified on Linux x64 and Apple Silicon macOS |
+| Claude Code | 2.1.241; additionally 2.1.260 in the Apple Silicon validation below |
+| Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows; 25.9.0 in Apple Silicon live validation |
+| Platform | WSL2 Ubuntu/Linux x64; native Windows x64; Apple Silicon macOS 26.5 (arm64) |
 
 Pi's distribution is part of the baseline, not an implementation detail: the npm build runs on Node and the standalone tar.gz build is a compiled Bun binary, and `process.execPath` means something different on each. `src/host-runtime.ts` owns that difference in one place (`scriptLaunch`), which sets `BUN_BE_BUN=1` so a compiled Pi binary runs the proposal bridge instead of its own embedded entry point, and pins `--config=` to a neutral `bunfig.toml` in the private request directory. Pi compiles with `--no-compile-autoload-bunfig`, but that protects Pi's own entry point only and does not survive `BUN_BE_BUN`; without the pin, a `bunfig.toml` in the bridge's working directory preloads code into it. Only the joined `--config=` form works, as Bun ignores a space-separated one and then consumes the script path. The mechanism is not Linux-specific: Pi builds all six standalone targets from one `bun build --compile` invocation, and `BUN_BE_BUN` is part of the embedded Bun runtime on each. Record a standalone baseline only after `npm run test:paid:bridge-standalone` passes against that exact build.
 
-Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml); subscription-consuming live Claude validation on macOS remains pending. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
+Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) and has live coverage for the release stages described below. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
+
+### Apple Silicon live validation
+
+Verified on 2026-09-05 with macOS 26.5/arm64, Claude Code 2.1.260, Node 25.9.0, and Pi 0.84.2:
+
+- Text, tools, images, isolation, recovery, Unicode, history, and web search.
+- Prompt-cache reuse of 99.3% and 99.0% on subsequent turns.
+- Tool bridge round trips through both npm Pi and the macOS arm64 standalone build.
+- All 20 blocking model/effort combinations. The account default selected Opus 5 at all five effort levels.
+
+The model matrix passes with personal skills left in place. Fable remains outside the blocking matrix. The verified Pi baseline remains 0.84.2.
 
 ## Validation
 
 `npm run check` enforces dependency and import policy, Markdown links and versions, source boundaries, JavaScript syntax, and strict TypeScript. `npm test` runs deterministic tests. Neither command performs Claude inference or consumes subscription quota; `check` may run `claude --version` for advisory metadata.
 
 Subscription-consuming commands are named `test:paid:*`. They show the detected subscription, request caps, and quota/spend warning, then require the exact phrase `USE PAID CLAUDE QUOTA`. Noninteractive execution additionally requires `PI_CLAUDE_CODE_PROVIDER_CONFIRM_PAID_TESTS=1`. The underlying scripts refuse direct invocation, perform no automatic retries, and atomically claim a stage and aggregate slot before every provider or web-search Claude launch.
+
+The runner gives Pi a temporary agent directory and disables automatic extension, skill, context-file, and prompt-template loading. Only the explicitly selected provider package is loaded. Both controls matter: `PI_CODING_AGENT_DIR` alone does not suppress `~/.agents/skills`. Keep personal skill directories in place; tests must not depend on moving them. Claude subscription authentication and organization-managed policy remain available.
 
 | Command | Maximum Claude launches |
 | --- | ---: |
@@ -73,6 +86,8 @@ Subscription-consuming commands are named `test:paid:*`. They show the detected 
 Both bridge lanes are required, and `test:paid:release` runs both. A `--no-tools` turn passes even when the proposal bridge never starts, so only a turn that actually round-trips a tool distinguishes a working bridge from a broken one. `/pi-claude-code-provider-doctor` performs the same handshake without consuming quota.
 
 The release suite covers text, tool, image, isolation, recovery, Unicode, history, web search, cache reuse, both bridge lanes, the gated aliases, and the supported effort matrix. Fable is technically selectable, but validating it on Pro consumes separate paid credits rather than the included subscription allocation, so it is deliberately excluded from the release matrix; the blocking Sonnet and Opus cases already exercise the shared transport. `npm run test:paid:fable` remains an opt-in one-launch case for a maintainer who separately authorizes that spend. Successful RPC harnesses close stdin so Pi can run session shutdown and flush metrics before exit.
+
+The model matrix pins verified identities for explicit aliases, but `default` delegates to Claude Code's account runtime default. For that entry it requires a concrete Claude model identity instead of assuming Sonnet or Opus. All entries still check context/output capabilities, cleanup, and the absence of leaked private directories. Pro's `default` and `opus` entries retain the conservative 200K context limit.
 
 Each request serializes the complete current transcript. Cache-hit percentage is `cacheRead / (input + cacheRead + cacheWrite) * 100`; cache writes seed later reuse and are not hits. Preserve append-stable history blocks and sorted tool catalogs when changing serialization. Claude Code 2.1.233 introduced a changing `<total_tokens>` reminder that broke reuse across fresh print-mode processes; the provider pins `totalTokensReminder: "off"` following [bcherny's maintainer guidance](https://github.com/anthropics/claude-code/issues/81259#issuecomment-5311888970). The setting is otherwise undocumented, so do not remove it without a replacement cache probe and new upstream guidance.
 

@@ -7,8 +7,8 @@ import { EXPECTED_MODEL_RESOLUTIONS } from "../src/compatibility.ts";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
 import { consumeJsonl, superviseLiveProcess } from "./lib/live-process.js";
-import { piLaunch } from "./lib/pi-installation.js";
-import { servedContextWindowMatches } from "./lib/model-matrix-policy.js";
+import { livePiLaunch } from "./lib/pi-installation.js";
+import { resolvedModelMatches, servedContextWindowMatches } from "./lib/model-matrix-policy.js";
 
 if (process.env.PI_CLAUDE_CODE_PROVIDER_PAID_TEST_CHILD !== "1") {
     throw new Error("The paid model matrix must be started through an npm test:paid:* script");
@@ -45,7 +45,7 @@ const selectedCases = selectedCase ? selectableCases.filter(({ model, effort }) 
 async function runCase(cwd, model, effort) {
     const metricsBefore = await metricsEntries();
     const runtimeBefore = await runtimeDirectories();
-    const launch = piLaunch([
+    const launch = livePiLaunch([
         "--no-session", "-e", packageRoot, "--provider", "pi-claude-code-provider", "--model", `${model}:${effort}`,
         "--no-tools", "--mode", "json", "Reply exactly OK.",
     ]);
@@ -87,7 +87,7 @@ async function runCase(cwd, model, effort) {
     if (!message) throw new Error(`${model}:${effort} returned no assistant message`);
     const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
     assert.match(text, /^OK\.?$/, `${model}:${effort} response text`);
-    assert.equal(message.responseModel, EXPECTED_MODEL_RESOLUTIONS[model], `${model}:${effort} resolved model`);
+    assert.ok(resolvedModelMatches(model, message.responseModel), `${model}:${effort} unexpected resolved model: ${message.responseModel}`);
     const metrics = await waitForMetrics(metricsBefore.length, model, effort);
     const configured = providerModels.find((entry) => entry.id === model);
     assert.equal(metrics.cleanupComplete, true, `${model}:${effort} private-state cleanup`);
@@ -96,7 +96,7 @@ async function runCase(cwd, model, effort) {
         true,
         `${model}:${effort} served context window`,
     );
-    if (installation.subscriptionType === "pro" && model === "opus") {
+    if (installation.subscriptionType === "pro" && (model === "opus" || model === "default")) {
         assert.equal(configured.contextWindow, 200_000, `${model}:${effort} safe configured context window`);
     }
     assert.equal(metrics.servedMaxOutputTokens, configured.maxTokens, `${model}:${effort} served maximum output`);
