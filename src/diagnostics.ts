@@ -3,6 +3,7 @@ import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, release, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { ModelAliasVersions } from "./claude-models.ts";
 import type { VersionStatus } from "./compatibility.ts";
 import { ClaudeCodeError } from "./errors.ts";
 import { hostRuntimeDescription } from "./host-runtime.ts";
@@ -18,6 +19,7 @@ export interface DiagnosticReportInput {
   piStatus: VersionStatus;
   claudeStatus?: VersionStatus;
   installation?: ClaudeInstallation;
+  modelVersions?: ModelAliasVersions;
   preflightError?: unknown;
   metrics?: RequestMetrics;
   searchMetrics?: SearchMetrics;
@@ -71,6 +73,9 @@ export async function writeDiagnosticReport(input: DiagnosticReportInput): Promi
           subscriptionType: input.installation.subscriptionType,
         }
       : undefined,
+    // Alias names and model ids are Claude Code's published vocabulary, not
+    // user content, so this keeps the report content-free.
+    modelVersions: input.modelVersions,
     preflight: diagnosticPreflight(input.preflightError, lexicalTempRoot, physicalTempRoot),
     bridge: input.bridgeProbe
       ? {

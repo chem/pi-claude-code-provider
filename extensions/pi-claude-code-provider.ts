@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { inspectClaudeInstallation } from "../src/auth.ts";
 import { providerModelsForSubscription } from "../src/catalog.ts";
 import { bridgeArgv } from "../src/claude-args.ts";
+import { readClaudeModelAliases } from "../src/claude-models.ts";
 import { MINIMUM_VERSIONS, VERIFIED_VERSIONS, platformStatus, startupPlatformWarning, versionStatus } from "../src/compatibility.ts";
 import { writeDiagnosticReport } from "../src/diagnostics.ts";
 import { errorText, normalizeClaudeOverflow } from "../src/errors.ts";
@@ -114,11 +115,13 @@ function registerDoctorCommand(pi: ExtensionAPI, runtimeCleanup: RuntimeCleanupR
           let current: ClaudeInstallation | undefined;
           let preflightError: unknown;
           try { current = await inspectClaudeInstallation(); } catch (error) { preflightError = error; }
+          const modelVersions = current ? await readClaudeModelAliases(current).catch(() => undefined) : undefined;
           const path = await writeDiagnosticReport({
             platformStatus: currentPlatform,
             piStatus,
             claudeStatus: current ? versionStatus("Claude Code", current.version, VERIFIED_VERSIONS.claudeCode, MINIMUM_VERSIONS.claudeCode) : undefined,
             installation: current,
+            modelVersions,
             preflightError,
             metrics: getLastRequestMetrics(),
             searchMetrics: getLastSearchMetrics(),
@@ -140,6 +143,9 @@ function registerDoctorCommand(pi: ExtensionAPI, runtimeCleanup: RuntimeCleanupR
           claudeStatus,
           installation: current,
           modelIds: providerModelsForSubscription(current.subscriptionType).map((model) => model.id),
+          // Diagnostic only, and fail-soft: a doctor run must never fail
+          // because Claude Code moved an undocumented internal table.
+          modelVersions: await readClaudeModelAliases(current).catch(() => undefined),
           metrics: getLastRequestMetrics(),
           metricsLogError: getMetricsLogError(),
           runtimeCleanup,

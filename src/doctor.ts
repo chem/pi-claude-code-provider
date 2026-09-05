@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeEnvironment } from "./auth.ts";
 import { bridgeArgv, bridgeLaunch, formatBridgeArgv } from "./claude-args.ts";
+import { MODEL_ALIASES, type ModelAliasVersions } from "./claude-models.ts";
 import type { VersionStatus } from "./compatibility.ts";
 import { NEUTRAL_BUN_CONFIG, hostRuntimeDescription, needsBunConfig } from "./host-runtime.ts";
 import { superviseProcess } from "./process-utils.ts";
@@ -105,6 +106,7 @@ export interface DoctorSummaryInput {
   claudeStatus: VersionStatus;
   installation: ClaudeInstallation;
   modelIds: readonly string[];
+  modelVersions?: ModelAliasVersions;
   metrics?: RequestMetrics;
   metricsLogError?: string;
   runtimeCleanup: RuntimeCleanupResult;
@@ -137,5 +139,27 @@ export function formatDoctorSummary(input: DoctorSummaryInput): string {
   const bridgeSummary = input.bridgeProbe
     ? `; bridge ${input.bridgeProbe.ok ? "ok" : "BROKEN"} via ${formatBridgeArgv(input.bridgeProbe.argv)} (${input.bridgeProbe.detail})`
     : "";
-  return `${verification}; runtime ${hostRuntimeDescription()}; Claude at ${input.installation.executable}; ${input.installation.subscriptionType} subscription; models: ${input.modelIds.join(", ")}${bridgeSummary}${requestSummary}${metricsLogSummary}${cleanupSummary}`;
+  const servedModels = formatServedModels(input);
+  return `${verification}; runtime ${hostRuntimeDescription()}; Claude at ${input.installation.executable}; ${input.installation.subscriptionType} subscription; models: ${input.modelIds.join(", ")}${servedModels}${bridgeSummary}${requestSummary}${metricsLogSummary}${cleanupSummary}`;
+}
+
+/**
+ * Name the concrete model each alias would be served. Fable needs a caveat on
+ * Pro: `claude auth status` exposes no usage-credit field, so this reports what
+ * the install would serve without implying it knows whether credits are on.
+ */
+function formatServedModels(input: DoctorSummaryInput): string {
+  const versions = input.modelVersions;
+  if (!versions) return "";
+  const advertised = MODEL_ALIASES.filter((alias) => input.modelIds.includes(alias));
+  if (advertised.length === 0) return "";
+  const entries = advertised.map((alias) => {
+    const model = versions[alias];
+    if (model === undefined) return `${alias} unavailable`;
+    const caveat = alias === "fable" && input.installation.subscriptionType === "pro"
+      ? " (Pro: requires usage credits enabled)"
+      : "";
+    return `${alias} ${model}${caveat}`;
+  });
+  return `; models (Claude Code install): ${entries.join(", ")}`;
 }

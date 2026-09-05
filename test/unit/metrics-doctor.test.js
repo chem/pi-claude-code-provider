@@ -127,6 +127,23 @@ test("metrics logging exposes only a sanitized latest failure", async () => {
 function doctorBase() {
     return { platformStatus: platformStatus("linux", "x64", "6.6-microsoft-standard-WSL2", "Ubuntu"), piStatus: versionStatus("Pi", "1", "1"), claudeStatus: versionStatus("Claude Code", "2", "1"), installation: { executable: "/usr/bin/claude", version: "2", subscriptionType: "pro" }, modelIds: ["sonnet"], runtimeCleanup: { removed: 0, failures: 0 } };
 }
+test("doctor names the model each alias would be served, or says it cannot", () => {
+    const base = { ...doctorBase(), modelIds: ["sonnet", "fable", "opus", "haiku"] };
+    // No map at all: the doctor stays exactly as it was before the scan existed.
+    assert.doesNotMatch(formatDoctorSummary(base), /Claude Code install/);
+    const versions = { sonnet: "claude-sonnet-5", fable: "claude-fable-5-1", opus: "claude-opus-5", haiku: "claude-haiku-4-5" };
+    const pro = formatDoctorSummary({ ...base, modelVersions: versions });
+    assert.match(pro, /models \(Claude Code install\): sonnet claude-sonnet-5, fable claude-fable-5-1 \(Pro: requires usage credits enabled\), opus claude-opus-5, haiku claude-haiku-4-5/);
+    // The caveat is about entitlement, not detection: auth status exposes no
+    // credit field, so the wording must not claim to know either way.
+    assert.doesNotMatch(pro, /credits (?:are|enabled and|disabled)/);
+    const max = formatDoctorSummary({ ...base, installation: { ...base.installation, subscriptionType: "max" }, modelVersions: versions });
+    assert.doesNotMatch(max, /requires usage credits/);
+    // A missing alias is reported as unavailable rather than omitted silently.
+    assert.match(formatDoctorSummary({ ...base, modelVersions: { sonnet: "claude-sonnet-5" } }), /sonnet claude-sonnet-5, fable unavailable, opus unavailable, haiku unavailable/);
+    assert.match(formatDoctorSummary({ ...base, modelVersions: {} }), /sonnet unavailable/);
+});
+
 test("doctor summary handles absent, successful, and failed request diagnostics", () => {
     const base = { platformStatus: platformStatus("linux", "x64", "6.6-microsoft-standard-WSL2", "Ubuntu"), piStatus: versionStatus("Pi", "1", "1"), claudeStatus: versionStatus("Claude Code", "2", "1"), installation: { executable: "/usr/bin/claude", version: "2", subscriptionType: "pro" }, modelIds: ["sonnet"], runtimeCleanup: { removed: 0, failures: 0 } };
     assert.match(formatDoctorSummary(base), /no request metrics recorded/);
