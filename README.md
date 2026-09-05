@@ -77,6 +77,7 @@ Claude Code's public headless protocol cannot accept arbitrary historical assist
 
 | Variable | Purpose |
 | --- | --- |
+| `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM` | Exact platform/architecture (for example `darwin/arm64`) whose startup compatibility advisory you acknowledge and wish to hide. Unset by default. Does not mark the platform verified or hide doctor/report metadata, authentication errors, rate-limit notices, or runtime validation failures. |
 | `PI_CLAUDE_CODE_PROVIDER_PATH` | Override the `claude` executable path. |
 | `PI_CLAUDE_CODE_PROVIDER_METRICS_LOG` | Append content-free request and search metrics as JSONL. |
 | `PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS` | Override the five-minute protocol-idle timeout with positive milliseconds. |
@@ -91,7 +92,7 @@ Pi packages run with the user's permissions; review the source before installati
 
 - **Provider missing:** run the doctor, correct the reported problem, then run `/reload`.
 - **Authentication rejected:** run `claude auth status` and log in with an eligible first-party subscription.
-- **Compatibility warning:** compare the installed versions with [DEVELOPING.md](DEVELOPING.md#compatibility-baseline).
+- **Compatibility warning:** compare the installed versions with [DEVELOPING.md](DEVELOPING.md#compatibility-baseline). To acknowledge an unverified platform without changing its verification status, launch with e.g. `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM=darwin/arm64 pi`. This hides that platform's startup advisory only; unset the variable to restore it. It is not evidence that live validation passed.
 - **Search unavailable:** allow `pi_claude_code_provider_web_search` in Pi's tool filters and check for a name collision.
 - **`pi auth check` reports `provider_not_found`:** that command does not load extensions, so it cannot see any extension-registered provider. Use `/pi-claude-code-provider-doctor` to check readiness.
 - **Tool proposals never arrive, or requests fail with `mcp_startup`:** run `/pi-claude-code-provider-doctor`. It reports the exact bridge argument vector and whether the handshake completed. Raising `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` only helps when the handshake succeeds but is slow.
