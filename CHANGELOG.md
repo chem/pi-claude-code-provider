@@ -9,14 +9,14 @@
 ### Added
 
 - `/pi-claude-code-provider-doctor` and the diagnostic report name the model each alias resolves to, without consuming subscription quota. Values that cannot be read report `unavailable` and never affect model selection.
-- Minimum supported Pi and Claude Code versions in `README.md`, reported by the doctor. They are advisory; an older installation still runs.
+- Minimum supported Pi and Claude Code versions in `README.md`, reported by the doctor. They are advisory: an older installation is not blocked and may still run.
 - `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM` suppresses one named platform's startup advisory without changing its verification status ([#3](https://github.com/chem/pi-claude-code-provider/pull/3)).
 - `npm run capture:claude-surface`, which captures `claude --help` verbatim for the capability tests.
 
 ### Changed
 
 - Apple Silicon macOS is recognized as verified, with community-reported live coverage recorded in `DEVELOPING.md` ([#2](https://github.com/chem/pi-claude-code-provider/pull/2)).
-- The paid model matrix asserts model families instead of dated model ids, so upstream model refreshes no longer fail it. `test:paid:matrix` drops from 20 launches to 15 and `test:paid:release` from 57 to 52.
+- The paid model matrix asserts model families instead of dated model ids, so upstream model refreshes no longer fail it.
 - `DESIGN.md` records what Claude Code adds to the model's view that this package cannot remove, the effect of dropping the user's Claude Code setting sources, and why the prompt-cache setting is pinned.
 
 ### Fixed
