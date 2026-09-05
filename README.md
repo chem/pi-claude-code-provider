@@ -13,7 +13,7 @@ This project was developed using frontier AI models under human guidance. Almost
 - Claude Code logged in to an eligible Pro, Max, Team, or Enterprise claude.ai subscription
 - Node.js 22.19 or newer only when Pi itself is installed from npm; the standalone build needs no separate Node installation
 
-Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live gate, which has passed on Linux x64; the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the exact scope. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
+Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live bridge gate, which has passed on Linux x64 and Apple Silicon macOS; the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the exact scope. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
 
 See the [compatibility baseline](DEVELOPING.md#compatibility-baseline) for tested versions and platforms. Other platforms continue with a warning and runtime capability checks.
 
@@ -45,7 +45,9 @@ To select one directly:
 
 The same canonical reference works from the command line with `pi --model pi-claude-code-provider/sonnet`.
 
-Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability.
+`default` leaves model selection to Claude Code's [account runtime default](https://code.claude.com/docs/en/model-config#default-model-setting); it is not a synonym for Sonnet. Personal model settings and environment overrides are suppressed by this provider, while organization-managed policy can still apply. Select `sonnet` or `opus` explicitly when the model family matters.
+
+Pi maps its exposed thinking levels to Claude's `low`, `medium`, `high`, `xhigh`, and `max` effort values; unsupported levels are hidden. Opus uses a 200K context window on Pro and 1M on Max, Team, and Enterprise. The provider retains 200K on Pro even when Claude Code reports a 1M-capable variant, because it cannot determine credit availability. The `default` entry uses the same conservative Pro limit because it can select Opus; explicit `sonnet` retains its 1M window.
 
 The `fable` alias is offered and separately testable, but it is excluded from the paid release gate. Fable 5 availability, included allocation, and billing vary by subscription tier. It otherwise follows the standard alias path wherever the account allows it. See Anthropic's [Fable plan policy](https://support.claude.com/en/articles/15424964-claude-fable-5-on-your-plan).
 
