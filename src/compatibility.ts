@@ -1,8 +1,8 @@
 import { release } from "node:os";
 
 export const VERIFIED_VERSIONS = Object.freeze({
-  pi: "0.84.2",
-  claudeCode: "2.1.241",
+  pi: "0.85.1",
+  claudeCode: "2.1.261",
 });
 
 // The oldest Pi and Claude Code this provider claims to support. Deliberately

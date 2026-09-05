@@ -38,6 +38,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: tooling/package-lock.json
-      - run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.84.2
+      - run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
       - run: npm run setup:dev
       - run: npm run release:check

@@ -36,14 +36,14 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 
 ## Compatibility baseline
 
-`src/compatibility.ts` owns Pi/Claude version, platform, and model-resolution values; `.github/workflows/ci.yml` owns the Node CI matrix. Update the relevant source and this table together only after the applicable validation gate passes.
+`src/compatibility.ts` owns Pi/Claude version, platform, and model-resolution values; `.github/workflows/ci.yml` owns the Node CI matrix and the Pi version CI installs. These three move together in the release commit, and the release gate then runs against exactly that commit; nothing is published unless it passes. Never advance them in a commit no gate will run against, and never advance them to a version the gate did not exercise.
 
-`MINIMUM_VERSIONS` in the same file is a separate frozen constant, stated in `README.md` and reported by the doctor, and is deliberately not derived from `VERIFIED_VERSIONS`. The baseline rises whenever a gate passes; the minimum moves only by an explicit decision to change what is supported. Deriving one from the other would drop support for working installs as a side effect of a baseline bump. Assert nothing about their relative order — they may coincide, and today the minimum is higher.
+`MINIMUM_VERSIONS` in the same file is a separate frozen constant, stated in `README.md` and reported by the doctor, and is deliberately not derived from `VERIFIED_VERSIONS`. The baseline rises whenever a gate passes; the minimum moves only by an explicit decision to change what is supported. Deriving one from the other would drop support for working installs as a side effect of a baseline bump. Assert nothing about their relative order. They coincide today because the gate validates the versions the minimum names, and they will diverge again the next time the baseline advances and the minimum deliberately does not.
 
 | Component | Verified baseline |
 | --- | --- |
-| Pi | 0.84.2, npm distribution; standalone tar.gz bridge live-verified on Linux x64 and Apple Silicon macOS |
-| Claude Code | 2.1.241 |
+| Pi | 0.85.1, npm distribution; standalone tar.gz bridge live-verified on Linux x64 and Apple Silicon macOS |
+| Claude Code | 2.1.261 |
 | Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; Apple Silicon macOS 26.5 (arm64) |
 
