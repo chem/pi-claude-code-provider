@@ -16,7 +16,7 @@ export const MINIMUM_VERSIONS = Object.freeze({
   claudeCode: "2.1.261",
 });
 
-const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64; Apple Silicon macOS/darwin-arm64";
+const VERIFIED_PLATFORMS = "WSL2 Ubuntu/linux-x64; native Windows/win32-x64; macOS/darwin";
 
 // Which family an alias must serve, not which dated model. Claude Code refreshes
 // model versions on its own schedule; pinning exact ids only guarantees the paid
@@ -99,7 +99,10 @@ export function platformStatus(
       warning: `${current} is a compatibility candidate; the verified platform baselines are ${VERIFIED_PLATFORMS}`,
     };
   }
-  if (platform === "darwin" && architecture === "arm64") {
+  // Verified across architectures rather than per-arch: the reported macOS
+  // coverage is a community report, and this package has no darwin-specific
+  // code path that an Intel Mac would take differently.
+  if (platform === "darwin") {
     return {
       component: "Platform",
       current,

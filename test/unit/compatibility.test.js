@@ -50,14 +50,14 @@ test("untested versions remain identifiable without a startup warning", () => {
 test("startup platform acknowledgement is exact and preserves diagnostic metadata", () => {
   // Acknowledgement only means anything on a platform that still carries an
   // advisory, so name one rather than whichever platform is verified today.
-  const status = Object.freeze(platformStatus("darwin", "x64"));
-  for (const value of ["", "1", "true", "*", "darwin/arm64", "darwin/x64 "]) {
+  const status = Object.freeze(platformStatus("linux", "arm64"));
+  for (const value of ["", "1", "true", "*", "linux/x64", "linux/arm64 "]) {
     assert.equal(startupPlatformWarning(status, value), status.warning);
   }
-  assert.equal(startupPlatformWarning(status, "darwin/x64"), undefined);
+  assert.equal(startupPlatformWarning(status, "linux/arm64"), undefined);
   assert.equal(status.isVerified, false);
-  assert.match(status.warning, /unverified/);
-  assert.equal(startupPlatformWarning(platformStatus("linux", "arm64"), "darwin/x64"), platformStatus("linux", "arm64").warning);
+  assert.match(status.warning, /compatibility candidate/);
+  assert.equal(startupPlatformWarning(platformStatus("win32", "arm64"), "linux/arm64"), platformStatus("win32", "arm64").warning);
   assert.equal(startupPlatformWarning(platformStatus("win32", "x64"), ""), undefined);
 });
 
@@ -65,11 +65,14 @@ test("reports verified and candidate platforms accurately", () => {
   assert.equal(platformStatus("linux", "x64", "6.6.87.2-microsoft-standard-WSL2", "Ubuntu-26.04").isVerified, true);
   assert.equal(platformStatus("linux", "x64", "6.8.0-generic").isVerified, false);
   assert.equal(platformStatus("linux", "arm64", "6.6-microsoft-standard-WSL2", "Ubuntu").isVerified, false);
-  const macos = platformStatus("darwin", "arm64");
-  assert.equal(macos.isVerified, true);
-  assert.equal(macos.warning, undefined);
-  assert.match(macos.verified, /Apple Silicon macOS\/darwin-arm64/);
-  assert.match(platformStatus("darwin", "x64").warning, /unverified/);
+  // macOS is verified by platform, not by architecture: an Intel Mac takes the
+  // same code path, so a per-arch split would warn without a reason to.
+  for (const architecture of ["arm64", "x64"]) {
+    const macos = platformStatus("darwin", architecture);
+    assert.equal(macos.isVerified, true);
+    assert.equal(macos.warning, undefined);
+    assert.match(macos.verified, /macOS\/darwin/);
+  }
   const windows = platformStatus("win32", "x64");
   assert.equal(windows.isVerified, true);
   assert.equal(windows.warning, undefined);
