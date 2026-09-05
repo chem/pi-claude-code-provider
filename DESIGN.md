@@ -23,6 +23,16 @@ Literal at signs are JSON Unicode-escaped because Claude expands `@path` syntax.
 
 Resending the complete current context keeps branches, compaction, reloads, and provider handoff Pi-authoritative without a second session store. It also adds framing tokens, cannot replay thinking signatures, and is not wire-equivalent to the Messages API. Claude controls prompt-cache keys and retention.
 
+## What Claude Code adds on its own
+
+The provider controls what it sends; it does not control everything the model sees. Claude Code adds content of its own that no documented flag removes, and the isolation guarantees above should not be read as covering it. All of the following was observed against Claude Code 2.1.261 using this project's exact argument vector and environment.
+
+In print mode the CLI prepends its own identity line, `You are a Claude agent, built on Anthropic's Claude Agent SDK.`, directly to the system prompt supplied through `--system-prompt-file`, with no separating newline. The branch is selected by non-interactivity rather than by the Agent SDK, so it applies on this project's documented path; `--append-system-prompt` only exchanges it for a different identity line. Nothing is appended after the supplied prompt.
+
+The CLI also injects a `<system-reminder>` block into the first user message carrying the authenticated account's email address and the current date. Neither `--setting-sources ""`, the pinned settings object, nor `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` suppresses it. It is a privacy-relevant disclosure rather than a correctness problem, and it is noted again under Security and privacy.
+
+Claude Code can further append turn nudges to user turns and tool results. Those are conditional, did not appear in the single-turn observation above, and should be treated as possible rather than certain.
+
 ## Tool proposal boundary
 
 Active Pi schemas are sorted into an ephemeral MCP catalog. Safe names are preserved; other names receive deterministic request-local aliases. Removed historical tools receive non-callable labels.
@@ -57,6 +67,10 @@ The package trusts the installed Pi and Claude executables, Node, the operating 
 
 Claude children receive an allowlisted environment for authentication, locale, proxies, shell discovery, and temporary storage. API keys, alternate routing, hooks, plugins, and arbitrary parent variables are not forwarded. Explicit settings suppress unmanaged user and project Claude customizations, and initialization verifies the resulting inventory. Administrator-managed Claude Code settings, hooks, and MCP policy are an organization-trusted boundary: the package cannot suppress them or prevent their startup effects before validation.
 
+Concretely, the provider passes `--setting-sources ""`, which drops the user, project and local setting sources, and supplies a fixed object through `--settings` in their place. A user who has configured Claude Code will reasonably expect otherwise, so the consequence is worth stating: their own model, effort and per-model settings have no effect on Pi requests. That is Invariant 1 in practice, not an oversight. The alias-resolution environment overrides are excluded from the allowlist for the same reason. Because both are true, alias resolution for this provider's child is fixed by Claude Code's own defaults, which is what makes the model versions the doctor reports accurate rather than a guess.
+
+The injected account email and date described under *What Claude Code adds on its own* survive all of this. Model-visible content reaches Anthropic either way, so this widens no boundary, but it does mean the request carries account context the provider never supplied and cannot remove.
+
 Diagnostics and optional metrics contain bounded system, version, size, usage, and lifecycle facts. They exclude prompts, messages, tool arguments and results, queries, output, request stderr, credentials, and temporary paths. A failed bridge handshake can include a bounded, path-sanitized startup diagnostic derived from bridge stderr. Sanitized paths outside home and temporary roots may remain, so reports must be inspected before sharing.
 
 The package does not sandbox Pi, protect against a compromised local executable, make untrusted prompts safe, or prove undocumented server behavior is absent. Model-visible content is sent to Anthropic and inherits ordinary Claude Code confidentiality risks.
@@ -66,3 +80,5 @@ The package does not sandbox Pi, protect against a compromised local executable,
 Machine-readable verified versions and model resolutions live in `src/compatibility.ts`; procedures live in [DEVELOPING.md](DEVELOPING.md). Version metadata is advisory, while protocol and capability mismatches fail at runtime.
 
 Full transcript serialization is required by the stateless design. Stable record boundaries preserve cacheable prefixes, so performance changes must not rewrite unchanged history or weaken validation and cleanup ordering.
+
+Append-stable serialization is necessary but not sufficient. From Claude Code 2.1.233 the CLI began appending terminal content of its own and moving the prompt-cache breakpoint onto it; because this provider starts a fresh print-mode process per request and replays the whole transcript, the next request inserts its new turn ahead of that appended content, so the previous request is no longer a prefix of the current one and reuse collapses entirely. The stateless replay design is what converts a Claude-side append into a total loss of caching. The provider therefore pins an undocumented settings key to suppress that content, on upstream maintainer guidance. Because the key is undocumented, the paid cache gate rather than the setting is the contract: see [DEVELOPING.md](DEVELOPING.md#validation) for the measurement procedure and the conditions for changing it.
