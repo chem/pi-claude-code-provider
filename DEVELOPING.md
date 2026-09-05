@@ -41,24 +41,24 @@ Pi remains authoritative for prepared context, branches, compaction, active tool
 | Component | Verified baseline |
 | --- | --- |
 | Pi | 0.84.2, npm distribution; standalone tar.gz bridge live-verified on Linux x64 and Apple Silicon macOS |
-| Claude Code | 2.1.241; additionally 2.1.260 in the Apple Silicon validation below |
-| Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows; 25.9.0 in Apple Silicon live validation |
+| Claude Code | 2.1.241 |
+| Node.js | 24.16.0 on WSL2 and Apple Silicon macOS CI; 22.23.1 on Windows |
 | Platform | WSL2 Ubuntu/Linux x64; native Windows x64; Apple Silicon macOS 26.5 (arm64) |
 
 Pi's distribution is part of the baseline, not an implementation detail: the npm build runs on Node and the standalone tar.gz build is a compiled Bun binary, and `process.execPath` means something different on each. `src/host-runtime.ts` owns that difference in one place (`scriptLaunch`), which sets `BUN_BE_BUN=1` so a compiled Pi binary runs the proposal bridge instead of its own embedded entry point, and pins `--config=` to a neutral `bunfig.toml` in the private request directory. Pi compiles with `--no-compile-autoload-bunfig`, but that protects Pi's own entry point only and does not survive `BUN_BE_BUN`; without the pin, a `bunfig.toml` in the bridge's working directory preloads code into it. Only the joined `--config=` form works, as Bun ignores a space-separated one and then consumes the script path. The mechanism is not Linux-specific: Pi builds all six standalone targets from one `bun build --compile` invocation, and `BUN_BE_BUN` is part of the embedded Bun runtime on each. Record a standalone baseline only after `npm run test:paid:bridge-standalone` passes against that exact build.
 
-Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) and has live coverage for the release stages described below. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
+Apple Silicon macOS passes the [deterministic GitHub Actions matrix](.github/workflows/ci.yml) and has community-reported live coverage for the release stages described below. Other platforms and versions continue with advisory warnings, while protocol and isolation mismatches fail closed. Supported effort values are `low`, `medium`, `high`, `xhigh`, and `max`; Pi `off` and `minimal` are hidden.
 
 ### Apple Silicon live validation
 
-Verified on 2026-09-05 with macOS 26.5/arm64, Claude Code 2.1.260, Node 25.9.0, and Pi 0.84.2:
+Community-reported, not maintainer-gated. A contributor ran the release stages on 2026-09-05 against macOS 26.5/arm64, Claude Code 2.1.260, Node 25.9.0, and Pi 0.84.2. Those Claude Code and Node versions are the reporter's, not this project's baseline, and are recorded here rather than in the table above so the baseline keeps stating only what a maintainer gate covered. Reported passing:
 
 - Text, tools, images, isolation, recovery, Unicode, history, and web search.
 - Prompt-cache reuse of 99.3% and 99.0% on subsequent turns.
 - Tool bridge round trips through both npm Pi and the macOS arm64 standalone build.
 - All 20 blocking model/effort combinations. The account default selected Opus 5 at all five effort levels.
 
-The model matrix passes with personal skills left in place. Fable remains outside the blocking matrix. The verified Pi baseline remains 0.84.2.
+The model matrix passes with personal skills left in place. Fable remains outside the blocking matrix. The verified Pi baseline remains 0.84.2. Raising these values requires a maintainer-run gate; a reproduction here would supersede this section.
 
 ## Validation
 

@@ -24,14 +24,16 @@ test("untested versions remain identifiable without a startup warning", () => {
 });
 
 test("startup platform acknowledgement is exact and preserves diagnostic metadata", () => {
-  const status = Object.freeze(platformStatus("darwin", "arm64"));
-  for (const value of ["", "1", "true", "*", "darwin/x64", "darwin/arm64 "]) {
+  // Acknowledgement only means anything on a platform that still carries an
+  // advisory, so name one rather than whichever platform is verified today.
+  const status = Object.freeze(platformStatus("darwin", "x64"));
+  for (const value of ["", "1", "true", "*", "darwin/arm64", "darwin/x64 "]) {
     assert.equal(startupPlatformWarning(status, value), status.warning);
   }
-  assert.equal(startupPlatformWarning(status, "darwin/arm64"), undefined);
+  assert.equal(startupPlatformWarning(status, "darwin/x64"), undefined);
   assert.equal(status.isVerified, false);
-  assert.match(status.warning, /live validation is pending/);
-  assert.equal(startupPlatformWarning(platformStatus("linux", "arm64"), "darwin/arm64"), platformStatus("linux", "arm64").warning);
+  assert.match(status.warning, /unverified/);
+  assert.equal(startupPlatformWarning(platformStatus("linux", "arm64"), "darwin/x64"), platformStatus("linux", "arm64").warning);
   assert.equal(startupPlatformWarning(platformStatus("win32", "x64"), ""), undefined);
 });
 
