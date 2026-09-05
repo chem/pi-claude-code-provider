@@ -8,7 +8,7 @@ import { VERIFIED_VERSIONS } from "../../src/compatibility.ts";
 import { PAID_LAUNCH_BUDGET_ENV } from "../../src/paid-launch-budget.ts";
 import { closeLiveRpcProcess, consumeJsonl, superviseLiveProcess } from "../../scripts/lib/live-process.js";
 import { piCliEntry } from "../../scripts/lib/pi-installation.js";
-import { CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
+import { CAPTURED_CLAUDE_HELP_PATH, ELIGIBLE_CLAUDE_AUTH } from "../support/claude-fixture.js";
 import { nodeFixtureArgs, nodeFixtureSource } from "../support/node-fixture.js";
 import { spawn } from "node:child_process";
 
@@ -21,7 +21,7 @@ async function fakeClaude(directory, reply = "OK") {
   await writeFile(executable, nodeFixtureSource(`
 if (process.argv.includes("--version")) process.stdout.write(${JSON.stringify(`${VERIFIED_VERSIONS.claudeCode}\n`)});
 else if (process.argv[2] === "auth" && process.argv[3] === "status") process.stdout.write(JSON.stringify(${JSON.stringify(ELIGIBLE_CLAUDE_AUTH)}));
-else if (process.argv.includes("--help")) process.stdout.write(${JSON.stringify(CLAUDE_HEADLESS_HELP)});
+else if (process.argv.includes("--help")) process.stdout.write(require("node:fs").readFileSync(${JSON.stringify(CAPTURED_CLAUDE_HELP_PATH)}, "utf8"));
 else {
   const systemPath = process.argv[process.argv.indexOf("--system-prompt-file") + 1];
   if (systemPath && require("node:fs").readFileSync(systemPath, "utf8").includes("AMBIENT_ISOLATION_MARKER")) {

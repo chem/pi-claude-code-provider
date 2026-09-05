@@ -3,15 +3,15 @@ import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, validateClaudeCapabilities } from "../../src/auth.ts";
+import { REQUIRED_HEADLESS_FLAGS, buildClaudeEnvironment, inspectClaudeInstallation, parseAuthStatus, validateClaudeCapabilities } from "../../src/auth.ts";
 import { MINIMUM_VERSIONS, meetsMinimumVersion } from "../../src/compatibility.ts";
 import { validateProcessTerminationCapability, windowsTaskkillExecutable } from "../../src/process-utils.ts";
-import { CLAUDE_2_1_241_HEADLESS_HELP, CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
+import { CAPTURED_CLAUDE_VERSION, CLAUDE_HEADLESS_HELP, ELIGIBLE_CLAUDE_AUTH, ELIGIBLE_CLAUDE_AUTH_JSON } from "../support/claude-fixture.js";
 import { nodeFixtureSource } from "../support/node-fixture.js";
 
 // Preflight mechanics are independent of the compatibility baseline, so these
-// fixtures pin their own version rather than tracking a constant a paid gate moves.
-const FIXTURE_CLAUDE_VERSION = "2.1.261";
+// fixtures track the captured help artifact rather than a constant a paid gate moves.
+const FIXTURE_CLAUDE_VERSION = CAPTURED_CLAUDE_VERSION;
 
 function missingClaudeCapabilities(help) {
     try {
@@ -58,15 +58,33 @@ test("builds an allowlisted Claude environment", () => {
     }
 });
 test("requires the Claude Code headless command surface", () => {
+    // Every assertion runs against help the CLI really emitted, so a spelling
+    // this project assumes but Claude Code never produces cannot pass here.
     assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP));
-    assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_2_1_241_HEADLESS_HELP));
-    const requiredOptions = CLAUDE_HEADLESS_HELP.split("\n").filter(Boolean);
-    for (const option of requiredOptions) {
-        const omitted = requiredOptions.filter((candidate) => candidate !== option).join("\n");
-        assert.equal(missingClaudeCapabilities(option).includes(option), false, `${option} positive token`);
-        assert.equal(missingClaudeCapabilities(omitted).includes(option), true, `${option} omission`);
-        assert.equal(missingClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace(option, `${option}-old`)).includes(option), true, `${option} near miss`);
+    assert.equal(REQUIRED_HEADLESS_FLAGS.length > 0, true);
+    for (const option of REQUIRED_HEADLESS_FLAGS) {
+        const pattern = new RegExp(`${option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "g");
+        assert.equal(pattern.test(CLAUDE_HEADLESS_HELP), true, `${option} appears in captured help`);
+        assert.equal(missingClaudeCapabilities(CLAUDE_HEADLESS_HELP).includes(option), false, `${option} positive token`);
+        assert.equal(
+            missingClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace(pattern, "--removed-flag")).includes(option),
+            true,
+            `${option} omission`,
+        );
+        assert.equal(
+            missingClaudeCapabilities(CLAUDE_HEADLESS_HELP.replace(pattern, `${option}-old`)).includes(option),
+            true,
+            `${option} near miss`,
+        );
     }
+});
+
+test("does not require the documented flags Claude Code hides from its help", () => {
+    // --system-prompt-file is documented and accepted, but has no help row.
+    // Requiring it made preflight fail where the real launch succeeds.
+    assert.equal(CLAUDE_HEADLESS_HELP.includes("--system-prompt-file "), false);
+    assert.equal(REQUIRED_HEADLESS_FLAGS.includes("--system-prompt-file"), false);
+    assert.doesNotThrow(() => validateClaudeCapabilities(CLAUDE_HEADLESS_HELP));
 });
 
 test("matches option aliases and value notation", () => {

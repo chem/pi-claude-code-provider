@@ -1,47 +1,14 @@
-export const CLAUDE_HEADLESS_HELP = [
-  "--print",
-  "--setting-sources",
-  "--settings",
-  "--disable-slash-commands",
-  "--permission-mode",
-  "--no-chrome",
-  "--prompt-suggestions",
-  "--output-format",
-  "--input-format",
-  "--include-partial-messages",
-  "--verbose",
-  "--no-session-persistence",
-  "--strict-mcp-config",
-  "--mcp-config",
-  "--tools",
-  "--allowedTools",
-  "--system-prompt",
-  "--model",
-  "--effort",
-].join("\n");
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-// Relevant option spellings captured from Claude Code 2.1.241's real help.
-export const CLAUDE_2_1_241_HEADLESS_HELP = `
-  -p, --print
-  --setting-sources <sources>
-  --settings <file-or-json>
-  --disable-slash-commands
-  --permission-mode <mode>
-  --no-chrome
-  --prompt-suggestions [value]
-  --output-format <format>
-  --input-format <format>
-  --include-partial-messages
-  --verbose
-  --no-session-persistence
-  --strict-mcp-config
-  --mcp-config <configs...>
-  --tools <tools...>
-  --allowedTools, --allowed-tools <tools...>
-  Explicitly provide context via: --system-prompt[-file], --append-system-prompt[-file]
-  --model <model>
-  --effort <level>
-`;
+// Claude Code's help, captured byte-for-byte. Re-pin with
+// `npm run capture:claude-surface` and update this constant deliberately; a
+// hand-written approximation invents spellings the CLI never emitted.
+export const CAPTURED_CLAUDE_VERSION = "2.1.261";
+export const CAPTURED_CLAUDE_HELP_PATH = fileURLToPath(
+  new URL(`./captured/claude-${CAPTURED_CLAUDE_VERSION}-help.txt`, import.meta.url),
+);
+export const CLAUDE_HEADLESS_HELP = readFileSync(CAPTURED_CLAUDE_HELP_PATH, "utf8");
 
 export const PROVIDER_INIT_FIELDS = Object.freeze({
   tools: Object.freeze([]),

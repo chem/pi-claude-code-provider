@@ -62,6 +62,12 @@ Community-reported, not maintainer-gated. A contributor ran the release stages o
 
 The model matrix passes with personal skills left in place. Fable remains outside the blocking matrix. The verified Pi baseline remains 0.84.2. Raising these values requires a maintainer-run gate; a reproduction here would supersede this section.
 
+### Captured Claude Code surface
+
+`test/support/captured/claude-<version>-help.txt` is `claude --help` captured byte-for-byte, currently from **2.1.261**. `validateClaudeCapabilities` decides whether the provider registers at all, so it is tested against help the CLI really emits rather than a hand-written list; the previous synthetic fixture spelled `--system-prompt-file` as its own row, which real help has never done, and a special case had to be added to production preflight to compensate.
+
+Recapture with `npm run capture:claude-surface`, then point `CAPTURED_CLAUDE_VERSION` in `test/support/claude-fixture.js` at the new file and review the diff. Re-pin deliberately, as part of moving the verified baseline — the diff on a CLI upgrade is the point of committing the artifact.
+
 ## Validation
 
 `npm run check` enforces dependency and import policy, Markdown links and versions, source boundaries, JavaScript syntax, and strict TypeScript. `npm test` runs deterministic tests. Neither command performs Claude inference or consumes subscription quota; `check` may run `claude --version` for advisory metadata.
