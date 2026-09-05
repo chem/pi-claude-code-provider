@@ -29,7 +29,7 @@ The provider controls what it sends; it does not control everything the model se
 
 In print mode the CLI prepends its own identity line, `You are a Claude agent, built on Anthropic's Claude Agent SDK.`, directly to the system prompt supplied through `--system-prompt-file`, with no separating newline. The branch is selected by non-interactivity rather than by the Agent SDK, so it applies on this project's documented path; `--append-system-prompt` only exchanges it for a different identity line. Nothing is appended after the supplied prompt.
 
-The CLI also injects a `<system-reminder>` block into the first user message carrying the authenticated account's email address and the current date. Neither `--setting-sources ""`, the pinned settings object, nor `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` suppresses it. It is a privacy-relevant disclosure rather than a correctness problem, and it is noted again under Security and privacy.
+The CLI also injects a `<system-reminder>` block of its own environment context into the first user message. Neither `--setting-sources ""`, the pinned settings object, nor `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` suppresses it, so a request carries context the provider never supplied and cannot remove.
 
 Claude Code can further append turn nudges to user turns and tool results. Those are conditional, did not appear in the single-turn observation above, and should be treated as possible rather than certain.
 
@@ -68,8 +68,6 @@ The package trusts the installed Pi and Claude executables, Node, the operating 
 Claude children receive an allowlisted environment for authentication, locale, proxies, shell discovery, and temporary storage. API keys, alternate routing, hooks, plugins, and arbitrary parent variables are not forwarded. Explicit settings suppress unmanaged user and project Claude customizations, and initialization verifies the resulting inventory. Administrator-managed Claude Code settings, hooks, and MCP policy are an organization-trusted boundary: the package cannot suppress them or prevent their startup effects before validation.
 
 Concretely, the provider passes `--setting-sources ""`, which drops the user, project and local setting sources, and supplies a fixed object through `--settings` in their place. A user who has configured Claude Code will reasonably expect otherwise, so the consequence is worth stating: their own model, effort and per-model settings have no effect on Pi requests. That is Invariant 1 in practice, not an oversight. The alias-resolution environment overrides are excluded from the allowlist for the same reason. Because both are true, alias resolution for this provider's child is fixed by Claude Code's own defaults, which is what makes the model versions the doctor reports accurate rather than a guess.
-
-The injected account email and date described under *What Claude Code adds on its own* survive all of this. Model-visible content reaches Anthropic either way, so this widens no boundary, but it does mean the request carries account context the provider never supplied and cannot remove.
 
 Diagnostics and optional metrics contain bounded system, version, size, usage, and lifecycle facts. They exclude prompts, messages, tool arguments and results, queries, output, request stderr, credentials, and temporary paths. A failed bridge handshake can include a bounded, path-sanitized startup diagnostic derived from bridge stderr. Sanitized paths outside home and temporary roots may remain, so reports must be inspected before sharing.
 

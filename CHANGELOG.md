@@ -4,25 +4,26 @@
 
 ### Removed
 
-- Remove the `default` model alias. Select `sonnet` instead; it is exactly equivalent on accounts where `default` served Sonnet, and unlike `default` it is predictable. `default` sent no `--model` at all, so what it served came from account entitlement and tier state that neither the user nor this package can inspect, and it never followed the model chosen in the user's own Claude Code settings, which this provider does not load. A saved `pi --model pi-claude-code-provider/default` or profile entry must be updated.
+- **Breaking.** The `default` model alias. Use `sonnet`. Pi reports an unknown model for a saved `pi --model pi-claude-code-provider/default` or profile entry.
 
 ### Added
 
-- Report the concrete model each alias would be served in `/pi-claude-code-provider-doctor` and the diagnostic report, so the served version can be checked without spending subscription quota. It degrades to `unavailable` rather than guessing, and never influences which model is requested.
-- Document minimum supported Pi and Claude Code versions in `README.md` and report them in the doctor. They are advisory: an older installation still runs.
-- Add `npm run capture:claude-surface`, which captures `claude --help` verbatim for the capability tests.
+- `/pi-claude-code-provider-doctor` and the diagnostic report name the model each alias resolves to, without consuming subscription quota. Values that cannot be read report `unavailable` and never affect model selection.
+- Minimum supported Pi and Claude Code versions in `README.md`, reported by the doctor. They are advisory; an older installation still runs.
+- `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM` suppresses one named platform's startup advisory without changing its verification status ([#3](https://github.com/chem/pi-claude-code-provider/pull/3)).
+- `npm run capture:claude-surface`, which captures `claude --help` verbatim for the capability tests.
 
 ### Changed
 
-- Recognize Apple Silicon macOS as live-verified, with tested versions and community-reported live coverage recorded in `DEVELOPING.md`.
-- Assert model families rather than dated model ids in the paid matrix, so an upstream model refresh no longer fails the gate. Removing `default` also takes `test:paid:matrix` from 20 launches to 15 and the release gate from 57 to 52.
-- Record in `DESIGN.md` what Claude Code injects that this package cannot remove — an identity line prepended to the system prompt, and a `<system-reminder>` carrying the account email and current date — along with the consequences of dropping the user's Claude Code setting sources and the reason the prompt-cache setting is pinned.
+- Apple Silicon macOS is recognized as verified, with community-reported live coverage recorded in `DEVELOPING.md` ([#2](https://github.com/chem/pi-claude-code-provider/pull/2)).
+- The paid model matrix asserts model families instead of dated model ids, so upstream model refreshes no longer fail it. `test:paid:matrix` drops from 20 launches to 15 and `test:paid:release` from 57 to 52.
+- `DESIGN.md` records what Claude Code adds to the model's view that this package cannot remove, the effect of dropping the user's Claude Code setting sources, and why the prompt-cache setting is pinned.
 
 ### Fixed
 
-- Stop deciding whether the provider can run by scraping `claude --help` for `--system-prompt-file`. That flag is documented but absent from the help screen, so the check passed only through a special case matching unrelated prose, and a cosmetic upstream reword would have taken every model offline on a working installation.
-- Isolate paid validation from personal Pi settings, extensions, skills, and context files without moving user files or weakening the provider's prompt-size limit.
-- Resolve npm Pi installations whose CLI lives in `dist/bundle/cli.js` by finding the package that owns the executable, rather than assuming how deep inside it the CLI sits.
+- Preflight no longer decides whether the provider can run by scraping `claude --help` for `--system-prompt-file`, which is documented but absent from the help screen. A minimum supported version covers it instead.
+- npm Pi installations whose CLI lives in `dist/bundle/cli.js` resolve by locating the owning package rather than assuming its depth ([#2](https://github.com/chem/pi-claude-code-provider/pull/2)).
+- Paid validation is isolated from personal Pi settings, extensions, skills, and context files without moving user files ([#2](https://github.com/chem/pi-claude-code-provider/pull/2)).
 
 ## [0.1.4] - 2026-08-23
 
