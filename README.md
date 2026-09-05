@@ -16,7 +16,7 @@ This project was developed using frontier AI models under human guidance. Almost
 Those are the minimum supported versions. They are not the same as the tested
 [compatibility baseline](DEVELOPING.md#compatibility-baseline), which records the newest versions a release gate has actually validated and moves on its own schedule. An older install is not blocked; `/pi-claude-code-provider-doctor` reports when one falls below the minimum.
 
-Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live bridge gate, which has passed on Linux x64 and Apple Silicon macOS; the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the exact scope. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
+Pi ships as an npm package that runs on Node and as a compiled standalone binary that embeds Bun. Both are supported: the package launches its tool-proposal bridge under whichever runtime is hosting Pi rather than assuming Node. The standalone build carries its own live bridge gate, which the maintainer runs on Linux x64 and a contributor has reported passing on macOS; the table in [DEVELOPING.md](DEVELOPING.md#compatibility-baseline) records the exact scope. Run `/pi-claude-code-provider-doctor` on either build: it reports the resolved runtime and completes a real bridge handshake.
 
 See the [compatibility baseline](DEVELOPING.md#compatibility-baseline) for tested versions and platforms. Other platforms continue with a warning and runtime capability checks.
 
@@ -60,6 +60,8 @@ After installation or an upstream update, run:
 /pi-claude-code-provider-doctor
 ```
 
+It names the concrete model each alias is currently served, alongside the resolved versions, runtime, and bridge handshake, without consuming subscription quota.
+
 Run `/pi-claude-code-provider-doctor report` to write a bounded, content-free JSON diagnostic report in a private temporary directory. Inspect the report before sharing it.
 
 The package also registers `pi_claude_code_provider_web_search`, a visible Pi tool that runs Claude with only WebSearch and WebFetch. It is skipped with a warning if another extension already owns that name. Truncated full results are removed at session shutdown.
@@ -80,7 +82,7 @@ Claude Code's public headless protocol cannot accept arbitrary historical assist
 
 | Variable | Purpose |
 | --- | --- |
-| `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM` | Exact platform/architecture (for example `darwin/arm64`) whose startup compatibility advisory you acknowledge and wish to hide. Unset by default. Does not mark the platform verified or hide doctor/report metadata, authentication errors, rate-limit notices, or runtime validation failures. |
+| `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM` | Exact platform/architecture (for example `linux/arm64`) whose startup compatibility advisory you acknowledge and wish to hide. Unset by default. Does not mark the platform verified or hide doctor/report metadata, authentication errors, rate-limit notices, or runtime validation failures. |
 | `PI_CLAUDE_CODE_PROVIDER_PATH` | Override the `claude` executable path. |
 | `PI_CLAUDE_CODE_PROVIDER_METRICS_LOG` | Append content-free request and search metrics as JSONL. |
 | `PI_CLAUDE_CODE_PROVIDER_IDLE_TIMEOUT_MS` | Override the five-minute protocol-idle timeout with positive milliseconds. |
@@ -95,7 +97,7 @@ Pi packages run with the user's permissions; review the source before installati
 
 - **Provider missing:** run the doctor, correct the reported problem, then run `/reload`.
 - **Authentication rejected:** run `claude auth status` and log in with an eligible first-party subscription.
-- **Compatibility warning:** compare the installed versions with [DEVELOPING.md](DEVELOPING.md#compatibility-baseline). To acknowledge an unverified platform without changing its verification status, launch with e.g. `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM=darwin/arm64 pi`. This hides that platform's startup advisory only; unset the variable to restore it. It is not evidence that live validation passed.
+- **Compatibility warning:** compare the installed versions with [DEVELOPING.md](DEVELOPING.md#compatibility-baseline). To acknowledge an unverified platform without changing its verification status, launch with e.g. `PI_CLAUDE_CODE_PROVIDER_ACKNOWLEDGED_PLATFORM=linux/arm64 pi`. This hides that platform's startup advisory only; unset the variable to restore it. It is not evidence that live validation passed.
 - **Search unavailable:** allow `pi_claude_code_provider_web_search` in Pi's tool filters and check for a name collision.
 - **`pi auth check` reports `provider_not_found`:** that command does not load extensions, so it cannot see any extension-registered provider. Use `/pi-claude-code-provider-doctor` to check readiness.
 - **Tool proposals never arrive, or requests fail with `mcp_startup`:** run `/pi-claude-code-provider-doctor`. It reports the exact bridge argument vector and whether the handshake completed. Raising `PI_CLAUDE_CODE_PROVIDER_MCP_READY_TIMEOUT_MS` only helps when the handshake succeeds but is slow.
