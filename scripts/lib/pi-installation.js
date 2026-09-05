@@ -24,8 +24,8 @@ export function findOnPath(name) {
 function firstPackageRoot(candidates, name) {
   for (const candidate of candidates) {
     try {
-      readFileSync(join(candidate, "package.json"));
-      return candidate;
+      const manifest = JSON.parse(readFileSync(join(candidate, "package.json"), "utf8"));
+      if (manifest.name === (name === "typebox" ? name : `@earendil-works/${name}`)) return candidate;
     } catch {
       // Try the next layout supported by npm's global installer.
     }
@@ -92,6 +92,8 @@ function resolvePiPackages(piCli) {
       join(shimDirectory, "node_modules", "@earendil-works", "pi-coding-agent"),
       // A normal npm global bin symlink resolves to <package>/dist/cli.js.
       dirname(dirname(piCli)),
+      // Pi 0.85 also ships the npm entry at <package>/dist/bundle/cli.js.
+      dirname(dirname(dirname(piCli))),
     ],
     "pi-coding-agent",
   );
@@ -126,6 +128,14 @@ export function piLaunch(args = []) {
   return /\.[cm]?js$/i.test(override)
     ? { command: process.execPath, args: [override, ...args] }
     : { command: override, args: [...args] };
+}
+
+/** Live validation must not discover personal skills, context, or executable extensions. */
+export function livePiLaunch(args = []) {
+  return piLaunch([
+    "--no-extensions", "--no-skills", "--no-context-files", "--no-prompt-templates",
+    ...args,
+  ]);
 }
 
 /** Read and validate the launcher override, so a typo fails by name rather than as ENOENT at spawn. */

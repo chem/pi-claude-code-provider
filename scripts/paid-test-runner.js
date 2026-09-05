@@ -68,17 +68,21 @@ if (confirmationMode === "environment") {
 
 const directory = await mkdtemp(join(tmpdir(), "pi-claude-code-provider-paid-"));
 const metricsLog = join(directory, "metrics.jsonl");
+const agentDirectory = join(directory, "pi-agent");
 const aggregateBudgetDirectory = join(directory, "aggregate-budget");
 await mkdir(aggregateBudgetDirectory);
 let observed = 0;
 
 try {
+  await mkdir(agentDirectory);
   for (const [stageIndex, stage] of planned.entries()) {
     const stageBudgetDirectory = join(directory, `stage-${stageIndex + 1}-budget`);
     await mkdir(stageBudgetDirectory);
     const before = await metricCount(metricsLog);
     await run(stage.script, stage.args, {
       ...process.env,
+      PI_CODING_AGENT_DIR: agentDirectory,
+      PI_OFFLINE: "1",
       // Lanes are explicit: an ambient override must not silently redirect the
       // npm lane, and the standalone lane must not fall back to the npm entry.
       ...(stage.requiresPiBin ? {} : { [PI_BIN_ENV]: "" }),
