@@ -61,6 +61,57 @@ test("locates an npm CLI in dist/bundle without accepting an unrelated manifest"
   }
 });
 
+test("resolves the owning package at any CLI depth", { skip: process.platform === "win32" }, async () => {
+  const prefix = await mkdtemp(join(tmpdir(), "pi-installation-depth-"));
+  const codingAgent = join(prefix, "node_modules", "@earendil-works", "pi-coding-agent");
+  const bin = join(prefix, "bin");
+  // Three levels below the package root. Pi has moved this path once already;
+  // the resolver must not encode any particular depth.
+  const entry = join(codingAgent, "dist", "bundle", "node", "cli.js");
+  const originalPath = process.env.PATH;
+  try {
+    await Promise.all([bin, dirname(entry), join(codingAgent, "node_modules", "@earendil-works", "pi-ai"), join(codingAgent, "node_modules", "typebox")]
+      .map((path) => mkdir(path, { recursive: true })));
+    await writeFile(entry, "#!/usr/bin/env node\n", { mode: 0o700 });
+    await symlink(entry, join(bin, "pi"));
+    await writeFile(join(codingAgent, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/bundle/node/cli.js" } }));
+    await writeFile(join(codingAgent, "node_modules", "@earendil-works", "pi-ai", "package.json"), JSON.stringify({ name: "@earendil-works/pi-ai" }));
+    await writeFile(join(codingAgent, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox" }));
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`;
+    assert.equal(locatePiPackages().codingAgent, realpathSync(codingAgent));
+    assert.equal(piCliEntry(), realpathSync(entry));
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    await rm(prefix, { recursive: true, force: true });
+  }
+});
+
+test("a resolution failure names the executable it could not place", async () => {
+  const prefix = await mkdtemp(join(tmpdir(), "pi-installation-orphan-"));
+  const bin = join(prefix, "bin");
+  const originalPath = process.env.PATH;
+  try {
+    await mkdir(bin, { recursive: true });
+    // A shebang script owned by no package: not compiled, so the standalone
+    // diagnostic must not fire and the raw message must be actionable.
+    const orphan = join(bin, "pi");
+    await writeFile(orphan, "#!/usr/bin/env node\n", { mode: 0o700 });
+    await chmod(orphan, 0o700);
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`;
+    assert.throws(locatePiPackages, (error) => {
+      assert.match(error.message, /@earendil-works\/pi-coding-agent/);
+      assert.match(error.message, /pi executable at/);
+      assert.doesNotMatch(error.message, /compiled standalone/);
+      return true;
+    });
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    await rm(prefix, { recursive: true, force: true });
+  }
+});
+
 test("an npm shim resolves even though it is not a shebang script", async () => {
   const prefix = await mkdtemp(join(tmpdir(), "pi-installation-shim-"));
   const codingAgent = join(prefix, "node_modules", "@earendil-works", "pi-coding-agent");

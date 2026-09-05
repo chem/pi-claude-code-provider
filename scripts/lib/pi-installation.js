@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { accessSync, closeSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, parse } from "node:path";
 
 export function findOnPath(name) {
   const extensions = process.platform === "win32"
@@ -21,16 +21,39 @@ export function findOnPath(name) {
   throw new Error(`${name} was not found on PATH`);
 }
 
-function firstPackageRoot(candidates, name) {
-  for (const candidate of candidates) {
-    try {
-      const manifest = JSON.parse(readFileSync(join(candidate, "package.json"), "utf8"));
-      if (manifest.name === (name === "typebox" ? name : `@earendil-works/${name}`)) return candidate;
-    } catch {
-      // Try the next layout supported by npm's global installer.
-    }
+function packageName(name) {
+  return name === "typebox" ? name : `@earendil-works/${name}`;
+}
+
+function isPackageRoot(directory, name) {
+  try {
+    return JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).name === packageName(name);
+  } catch {
+    // Not a readable package root, or not the package being looked for.
+    return false;
   }
-  throw new Error(`Cannot resolve Pi's bundled ${name}; reinstall the active pi executable or update the tooling`);
+}
+
+function firstPackageRoot(candidates, name, detail = "") {
+  for (const candidate of candidates) {
+    if (isPackageRoot(candidate, name)) return candidate;
+  }
+  throw new Error(`Cannot resolve Pi's bundled ${packageName(name)}${detail}`);
+}
+
+/**
+ * Find the package that owns a file by walking ancestors. Pi moved its CLI from
+ * <package>/dist/cli.js to <package>/dist/bundle/cli.js in 0.84.3; guessing a
+ * fixed depth breaks again the next time that path changes.
+ */
+function ancestorPackageRoot(start, name) {
+  let directory = dirname(start);
+  const { root } = parse(directory);
+  for (;;) {
+    if (isPackageRoot(directory, name)) return directory;
+    if (directory === root) return undefined;
+    directory = dirname(directory);
+  }
 }
 
 export const PI_BIN_ENV = "PI_CLAUDE_CODE_PROVIDER_PI_BIN";
@@ -86,16 +109,16 @@ export function locatePiPackages() {
 
 function resolvePiPackages(piCli) {
   const shimDirectory = dirname(piCli);
+  const owningPackage = ancestorPackageRoot(piCli, "pi-coding-agent");
   const codingAgent = firstPackageRoot(
     [
-      // pi.dev's Windows installer keeps its shims beside node_modules.
+      // pi.dev's Windows installer keeps its shims beside node_modules, so the
+      // package is not an ancestor of the shim and must be tried first.
       join(shimDirectory, "node_modules", "@earendil-works", "pi-coding-agent"),
-      // A normal npm global bin symlink resolves to <package>/dist/cli.js.
-      dirname(dirname(piCli)),
-      // Pi 0.85 also ships the npm entry at <package>/dist/bundle/cli.js.
-      dirname(dirname(dirname(piCli))),
+      ...(owningPackage ? [owningPackage] : []),
     ],
     "pi-coding-agent",
+    ` for the pi executable at ${piCli}; reinstall the active pi executable or update the tooling`,
   );
   const nestedModules = join(codingAgent, "node_modules");
   const globalModules = dirname(dirname(codingAgent));
