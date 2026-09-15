@@ -138,6 +138,19 @@ test("rejects unexpected initialization tools", () => {
 function init(mapper) {
     mapper.accept(initRecord());
 }
+function retryRecord(attempt = 1) {
+    return {
+        type: "system",
+        subtype: "api_retry",
+        attempt,
+        max_retries: 10,
+        retry_delay_ms: 500,
+        error_status: 529,
+        error: "overloaded",
+        uuid: `retry-${attempt}`,
+        session_id: "session-1",
+    };
+}
 function exactToolTerminationResult(overrides = {}) {
     return {
         type: "result",
@@ -632,4 +645,116 @@ test("explains a cache-breakpoint limit rejection and names the escape hatch", a
     init(unrelated);
     unrelated.accept({ type: "result", is_error: true, api_error_status: 429, result: "subscription limit reached" });
     assert.equal(unrelated.cacheBreakpointLimit, false);
+});
+test("discards an abandoned attempt after api_retry so the surviving stream can finish", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const mapper = makeMapper(stream, output, new Set(), new Map(), () => { });
+    const consume = (async () => {
+        for await (const _event of stream) { /* drain */ }
+    })();
+    init(mapper);
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5", usage: { input_tokens: 10 } } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial that must not survive" } } });
+    mapper.accept(retryRecord(1));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_2", model: "claude-sonnet-5", usage: { input_tokens: 10 } } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "surviving answer" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    mapper.accept({ type: "stream_event", event: { type: "message_stop" } });
+    mapper.accept({ type: "result", is_error: false, result: "surviving answer" });
+    assert.equal(mapper.hasSuccessfulResult, true);
+    assert.equal(output.content.length, 1);
+    assert.equal(output.content[0].text, "surviving answer");
+    assert.equal(output.responseId, "msg_2");
+    mapper.completeResult();
+    await consume;
+});
+test("clears an unclosed tool_use block when Claude retries the stream", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const mapper = makeMapper(stream, output, new Set(["mcp__pi__read"]), new Map([["mcp__pi__read", "read"]]), () => { });
+    const consume = (async () => {
+        for await (const _event of stream) { /* drain */ }
+    })();
+    mapper.accept(initRecord(["mcp__pi__read"], [{ name: "pi", status: "connected" }]));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_old", name: "mcp__pi__read", input: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"pa' } } });
+    mapper.accept(retryRecord(1));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_2", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "answered without the tool" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    mapper.accept({ type: "stream_event", event: { type: "message_stop" } });
+    mapper.accept({ type: "result", is_error: false, result: "answered without the tool" });
+    assert.equal(mapper.hasSuccessfulResult, true);
+    assert.equal(output.content.length, 1);
+    assert.equal(output.content[0].type, "text");
+    mapper.completeResult();
+    await consume;
+});
+test("still rejects a duplicate message_start when Claude did not retry", () => {
+    const mapper = makeMapper(createAssistantMessageEventStream(), createOutput(model), new Set(), new Map(), () => { });
+    init(mapper);
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5", usage: {} } } });
+    assert.throws(
+        () => mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5", usage: {} } } }),
+        /duplicate message_start/,
+    );
+});
+test("accepts api_retry before any message_start", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const mapper = makeMapper(stream, output, new Set(), new Map(), () => { });
+    const consume = (async () => {
+        for await (const _event of stream) { /* drain */ }
+    })();
+    init(mapper);
+    mapper.accept(retryRecord(1));
+    mapper.accept(retryRecord(2));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_3", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok after retries" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    mapper.accept({ type: "stream_event", event: { type: "message_stop" } });
+    mapper.accept({ type: "result", is_error: false, result: "ok after retries" });
+    assert.equal(mapper.hasSuccessfulResult, true);
+    assert.equal(output.content[0].text, "ok after retries");
+    mapper.completeResult();
+    await consume;
+});
+test("keeps only the surviving attempt after consecutive api_retry records", async () => {
+    const stream = createAssistantMessageEventStream();
+    const output = createOutput(model);
+    const mapper = makeMapper(stream, output, new Set(), new Map(), () => { });
+    const consume = (async () => {
+        for await (const _event of stream) { /* drain */ }
+    })();
+    init(mapper);
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_a", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "abandoned" } } });
+    mapper.accept(retryRecord(1));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_b", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "also abandoned" } } });
+    mapper.accept(retryRecord(2));
+    mapper.accept({ type: "stream_event", event: { type: "message_start", message: { id: "msg_c", model: "claude-sonnet-5", usage: {} } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "kept" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "final answer" } } });
+    mapper.accept({ type: "stream_event", event: { type: "content_block_stop", index: 1 } });
+    mapper.accept({ type: "stream_event", event: { type: "message_stop" } });
+    mapper.accept({ type: "result", is_error: false, result: "final answer" });
+    assert.equal(mapper.hasSuccessfulResult, true);
+    assert.equal(output.content.length, 2);
+    assert.equal(output.content[0].thinking, "kept");
+    assert.equal(output.content[1].text, "final answer");
+    assert.equal(output.responseId, "msg_c");
+    mapper.completeResult();
+    await consume;
 });
