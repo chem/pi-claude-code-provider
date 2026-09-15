@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Requests no longer fail with `duplicate message_start` when Claude Code retries a transient API error and restarts the stream. The retried answer keeps only the surviving attempt.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added

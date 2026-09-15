@@ -155,6 +155,8 @@ export class ClaudeEventMapper {
       this.acceptRateLimit(record.rate_limit_info);
     } else if (record.type === "assistant") {
       this.acceptAssistant(record);
+    } else if (record.type === "system" && record.subtype === "api_retry") {
+      this.acceptApiRetry();
     } else if (record.type === "user" || record.type === "system") {
       // Completed user echoes and non-init system status records are redundant
       // because include-partial-messages supplies the canonical stream events.
@@ -193,6 +195,23 @@ export class ClaudeEventMapper {
     if (this.responseStarted || this.terminal) return;
     this.responseStarted = true;
     this.stream.push({ type: "start", partial: this.output });
+  }
+
+  /**
+   * Claude Code restarts the API stream after a retryable failure and replays
+   * `message_start` for the new attempt. Discard the abandoned attempt so its
+   * partial text and tool calls cannot merge with, or duplicate, the attempt
+   * that succeeds. Pi observes `partial` and the terminal message through this
+   * same mutable output, so the published view converges on the surviving
+   * attempt. The assistant diagnostic is kept because it explains the failure
+   * that caused the retry.
+   */
+  private acceptApiRetry(): void {
+    this.blocks.clear();
+    this.output.content.length = 0;
+    this.messageStarted = false;
+    this.messageStopped = false;
+    this.stopReason = undefined;
   }
 
   private acceptStreamEvent(event: Record<string, unknown>): void {
