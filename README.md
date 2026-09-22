@@ -1,5 +1,9 @@
 # pi-claude-code-provider
 
+## Optional hermit-shell connection (experimental)
+
+If a separately operated [hermit-shell](https://github.com/kojira/hermit-shell) proxy is available on the same host, set `PI_HERMIT_SHELL_PROVIDER_ENABLED=1` before starting Pi. This adds a distinct `hermit-shell` provider at `http://127.0.0.1:8765/v1` (override the port with `PI_HERMIT_SHELL_PORT`). It does not replace the existing Claude Code provider or access Claude credentials; hermit-shell owns authentication and Anthropic request caching. Only configure this for a trusted local proxy, and do not expose an unauthenticated proxy to the network. The proxy must forward Anthropic cache-read and cache-write counts in OpenAI `prompt_tokens_details` for Pi usage to reflect cache effectiveness. The model list is currently Sonnet 4.6, Opus 4.6, and Haiku 4.5; thinking blocks are not exposed by the proxy's OpenAI conversion. Validate actual cache reuse before migrating long sessions.
+
 A [Pi](https://pi.dev) package that creates a provider for Claude family models from a subscription-authenticated Claude Code installation by launching Anthropic's installed `claude` executable in documented non-interactive print mode. Pi remains fully in charge of the session: branching, compaction, and history behave like any other Pi provider, and every tool runs visibly in Pi — the Claude process can propose tool calls but never execute anything on its own. The goal is simple: the convenience of your Claude subscription in Pi, with the fewest possible surprises.
 
 This package never imitates private OAuth traffic, does not use the Agents SDK, and does not modify Claude's internal session files. It never reads Claude credentials or uses an Anthropic API key.

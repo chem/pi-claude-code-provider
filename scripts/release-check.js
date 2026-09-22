@@ -46,6 +46,7 @@ const required = [
   "README.md",
   "bridge/mcp-proposal-server.js",
   "extensions/pi-claude-code-provider.ts",
+  "extensions/pi-hermit-shell-provider.ts",
   "package.json",
 ];
 for (const path of required) {
