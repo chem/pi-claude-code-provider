@@ -63,6 +63,8 @@ Active Pi schemas are sorted into an ephemeral MCP catalog. Names of at most 48 
 
 The Claude child runs in `dontAsk` mode with local tools disabled. A proposal-only MCP server implements `initialize` and `tools/list`; any `tools/call` writes a violation marker and returns an error. The provider waits for catalog readiness, maps complete known proposals back to Pi, terminates Claude, verifies cleanup and violation state, removes private transport files, and only then publishes the Pi `toolUse` result.
 
+On POSIX, a handoff accepts a SIGTERM or SIGKILL exit only when the supervisor recorded sending that signal to its owned process group. This includes cleanup escalating after the SIGTERM grace period; proposal validation and successful cleanup still precede publication. Unrecorded signal exits remain failures.
+
 Unknown tools, malformed arguments, execution attempts, private transport paths, unexpected exits, caller cancellation, and cleanup failures fail the request.
 
 ## Process and storage lifecycle

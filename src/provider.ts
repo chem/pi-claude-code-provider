@@ -19,7 +19,7 @@ import { JsonlParser } from "./jsonl.ts";
 import { recordRequestMetrics } from "./metrics.ts";
 import { createOutput } from "./output.ts";
 import { claimPaidTestLaunch } from "./paid-launch-budget.ts";
-import { ProcessTerminationError, superviseProcess } from "./process-utils.ts";
+import { ProcessTerminationError, superviseProcess, type ProcessResult } from "./process-utils.ts";
 import { removeRuntimeDirectory } from "./runtime-directories.ts";
 import type { ImageStoreLease } from "./session-image-store.ts";
 import type { ResolvedSession, SessionRequest } from "./session-registry.ts";
@@ -559,13 +559,18 @@ export function createClaudeStream(
 }
 
 export function isExpectedToolHandoffExit(
-  result: { code: number | null; signal: NodeJS.Signals | null },
+  result: ProcessResult,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  // A correlated provider-owned handoff closes as code 143 on POSIX. Windows
-  // taskkill /F closes the owned Claude root as code 1. These codes are accepted
-  // only from the tool-handoff path after cleanup and proposal validation.
-  if (result.signal !== null) return false;
+  // POSIX cleanup can escalate to SIGKILL. Accept only signals the supervisor
+  // successfully sent; an unsolicited signal must still fail the handoff.
+  if (result.signal !== null) {
+    return platform !== "win32" &&
+      (result.signal === "SIGTERM" || result.signal === "SIGKILL") &&
+      result.terminationSignals?.includes(result.signal) === true;
+  }
+  // Claude's POSIX handler exits 143; Windows taskkill /F exits 1. This check
+  // runs only after the tool proposal and process cleanup have been validated.
   return platform === "win32" ? result.code === 1 : result.code === 143;
 }
 

@@ -976,6 +976,14 @@ test("accepts only the platform-specific provider-terminated handoff exit", () =
     assert.equal(isExpectedToolHandoffExit({ code: 1, signal: null }, "win32"), true);
     assert.equal(isExpectedToolHandoffExit({ code: 143, signal: null }, "win32"), false);
     assert.equal(isExpectedToolHandoffExit({ code: 1, signal: "SIGTERM" }, "win32"), false);
+    for (const signal of ["SIGTERM", "SIGKILL"]) {
+        assert.equal(isExpectedToolHandoffExit({ code: null, signal }, "linux"), false);
+        assert.equal(isExpectedToolHandoffExit({ code: null, signal, terminationSignals: [signal] }, "linux"), true);
+        assert.equal(isExpectedToolHandoffExit({ code: null, signal, terminationSignals: [signal] }, "win32"), false);
+    }
+    assert.equal(isExpectedToolHandoffExit({ code: null, signal: "SIGKILL", terminationSignals: ["SIGTERM"] }, "linux"), false);
+    assert.equal(isExpectedToolHandoffExit({ code: null, signal: "SIGTERM", terminationSignals: ["SIGTERM", "SIGKILL"] }, "linux"), true);
+    assert.equal(isExpectedToolHandoffExit({ code: null, signal: "SIGINT", terminationSignals: ["SIGINT"] }, "linux"), false);
 });
 
 test("provider accepts an exact-PID Windows tool handoff", { skip: process.platform !== "win32" }, async () => {
@@ -1134,7 +1142,7 @@ process.stdin.on("end", () => {
         await rm(fake.dir, { recursive: true, force: true });
     }
 });
-test("provider rejects a signal exit after tool-handoff termination", { skip: process.platform === "win32" }, async () => {
+test("provider accepts its own SIGKILL escalation after tool-handoff cleanup", { skip: process.platform === "win32" }, async () => {
     const fake = await fakeClaude(`
 process.on("SIGTERM", () => {});
 process.stdin.resume();
@@ -1145,10 +1153,32 @@ process.stdin.on("end", () => {
 });`);
     try {
         const result = await createClaudeStream({ executable: fake.executable, version: CAPTURED_CLAUDE_VERSION, subscriptionType: "pro" })(model, toolContext, { reasoning: "medium" }).result();
+        assert.equal(result.stopReason, "toolUse");
+        assert.equal(result.content.find((block) => block.type === "toolCall")?.name, "read");
+        const metrics = await waitForRequestMetrics((entry) => entry.stopReason === "toolUse" && entry.exitSignal === "SIGKILL");
+        assert.equal(metrics.lastPhase, "completed");
+        assert.equal(metrics.cleanupComplete, true);
+        assert.equal(metrics.errorCategory, undefined);
+    }
+    finally {
+        await rm(fake.dir, { recursive: true, force: true });
+    }
+});
+test("provider rejects SIGKILL when it only sent SIGTERM", { skip: process.platform === "win32" }, async () => {
+    const fake = await fakeClaude(`
+process.on("SIGTERM", () => process.kill(process.pid, "SIGKILL"));
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify(${JSON.stringify(toolInit)}) + "\\n");
+  for (const record of ${JSON.stringify(toolUseEvents({ messageId: "msg_external_signal", toolUseId: "toolu_external_signal", partialJson: '{"path":"package.json"}' }))}) process.stdout.write(JSON.stringify(record) + "\\n");
+  setInterval(() => {}, 1000);
+});`);
+    try {
+        const result = await createClaudeStream({ executable: fake.executable, version: CAPTURED_CLAUDE_VERSION, subscriptionType: "pro" })(model, toolContext, { reasoning: "medium" }).result();
         assert.equal(result.stopReason, "error");
         assert.match(result.errorMessage ?? "", /tool handoff exited unexpectedly.*SIGKILL/);
         const metrics = await waitForRequestMetrics((entry) => entry.errorCategory === "process_exit" && entry.exitSignal === "SIGKILL");
-        assert.equal(metrics.lastPhase, "process_exited");
+        assert.equal(metrics.cleanupComplete, true);
     }
     finally {
         await rm(fake.dir, { recursive: true, force: true });

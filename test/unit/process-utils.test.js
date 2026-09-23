@@ -171,6 +171,27 @@ test("process-group termination removes a descendant after its leader exits", { 
     await terminateProcessGroup(parent);
     await assertProcessGone(pid);
 });
+for (const owned of [true, false]) {
+    test(`supervisor records only its own termination signals (${owned ? "owned" : "external"} SIGKILL)`, { skip: process.platform === "win32", timeout: 5000 }, async () => {
+        const child = spawn(process.execPath, ["-e", 'process.on("SIGTERM", () => {}); process.send("ready"); setInterval(() => {}, 1000);'], {
+            detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
+        });
+        const supervisor = superviseProcess(child, { idleTimeoutMs: 10000, totalTimeoutMs: 10000, onFailure() {} });
+        try {
+            await once(child, "message");
+            if (owned) await supervisor.terminate();
+            else process.kill(-child.pid, "SIGKILL");
+            const result = await supervisor.wait();
+            assert.equal(result.code, null);
+            assert.equal(result.signal, "SIGKILL");
+            assert.deepEqual(result.terminationSignals, owned ? ["SIGTERM", "SIGKILL"] : undefined);
+        } finally {
+            supervisor.dispose();
+            await terminateProcessGroup(child);
+        }
+    });
+}
+
 test("supervisor termination is idempotent", async () => {
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
     const supervisor = superviseProcess(child, { idleTimeoutMs: 1000, totalTimeoutMs: 1000, onFailure() { } });

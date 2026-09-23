@@ -6,6 +6,7 @@ import { isAbsolute, join } from "node:path";
 export interface ProcessResult {
   code: number | null;
   signal: NodeJS.Signals | null;
+  terminationSignals?: readonly NodeJS.Signals[];
   error?: Error;
 }
 
@@ -41,6 +42,7 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
   let settled = false;
   let failed = false;
   let terminationPromise: Promise<void> | undefined;
+  const terminationSignals: NodeJS.Signals[] = [];
   let resolveResult: ((result: ProcessResult) => void) | undefined;
   let rejectResult: ((error: Error) => void) | undefined;
   const result = new Promise<ProcessResult>((resolve, reject) => {
@@ -56,8 +58,15 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
     if (totalTimer) clearTimeout(totalTimer);
   };
 
+  const terminateOwnedProcess = (ownedChild: ChildProcess): Promise<void> =>
+    terminateProcessGroup(ownedChild, undefined, (pid, signal) => {
+      const sent = process.kill(pid, signal);
+      if (signal === "SIGTERM" || signal === "SIGKILL") terminationSignals.push(signal);
+      return sent;
+    });
+
   const terminate = (): Promise<void> => {
-    terminationPromise ??= (options.terminate ?? terminateProcessGroup)(child).catch((cause: unknown) => {
+    terminationPromise ??= (options.terminate ?? terminateOwnedProcess)(child).catch((cause: unknown) => {
       // A leader can exit while descendants still own its process group or
       // inherited pipes. Only successful tree termination establishes cleanup;
       // an exit code cannot make a rejected terminator safe.
@@ -95,7 +104,11 @@ export function superviseProcess(child: ChildProcess, options: ProcessSupervisor
     if (settled) return;
     settled = true;
     clearTimers();
-    resolveResult?.({ code, signal });
+    resolveResult?.({
+      code,
+      signal,
+      ...(terminationSignals.length > 0 ? { terminationSignals: [...terminationSignals] } : {}),
+    });
   };
   const onStdinError = (error: Error): void => fail(new Error(`Claude Code stdin failed: ${error.message}`));
   const onStdoutError = (error: Error): void => fail(new Error(`Claude Code stdout failed: ${error.message}`));
